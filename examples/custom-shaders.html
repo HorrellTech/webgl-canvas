@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Canvas - Custom Shaders Example</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #fff;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 40px;
+        }
+        
+        .demo-section {
+            margin: 30px 0;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+        
+        canvas {
+            border: 2px solid #555;
+            border-radius: 4px;
+            display: block;
+            margin: 20px auto;
+            background: #000;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            margin: 0 10px;
+            padding: 10px 20px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .code-example {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            margin: 20px 0;
+            border: 1px solid #444;
+        }
+        
+        .highlight {
+            color: #569cd6;
+        }
+        
+        .string {
+            color: #ce9178;
+        }
+        
+        .comment {
+            color: #6a9955;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebGL Canvas - Custom Shaders</h1>
+        <div class="subtitle">Advanced examples with custom shaders and effects</div>
+        
+        <div class="demo-section">
+            <h2>Rainbow Shader Demo</h2>
+            <canvas id="rainbowCanvas" width="800" height="400"></canvas>
+            <div class="controls">
+                <button onclick="drawRainbow()">Draw Rainbow Effect</button>
+                <button onclick="clearCanvas('rainbow')">Clear</button>
+            </div>
+            
+            <div class="code-example">
+<span class="comment">// Custom rainbow shader</span><br>
+<span class="highlight">const</span> rainbowShader = {<br>
+&nbsp;&nbsp;vertex: <span class="string">`<br>
+&nbsp;&nbsp;&nbsp;&nbsp;attribute vec2 a_position;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;uniform mat3 u_transform;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;uniform vec2 u_resolution;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;varying vec2 v_position;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;void main() {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;vec3 transformed = u_transform * vec3(a_position, 1.0);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;vec2 normalized = ((transformed.xy / u_resolution) * 2.0 - 1.0) * vec2(1, -1);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;gl_Position = vec4(normalized, 0, 1);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;v_position = a_position;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;`</span>,<br>
+&nbsp;&nbsp;fragment: <span class="string">`<br>
+&nbsp;&nbsp;&nbsp;&nbsp;precision mediump float;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;uniform float u_time;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;varying vec2 v_position;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;void main() {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;float rainbow = sin(v_position.x * 0.01 + u_time) * 0.5 + 0.5;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;vec3 color = vec3(<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sin(rainbow * 6.28),<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sin(rainbow * 6.28 + 2.09),<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sin(rainbow * 6.28 + 4.18)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;) * 0.5 + 0.5;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;gl_FragColor = vec4(color, 1.0);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;`</span><br>
+};<br><br>
+
+<span class="comment">// Add and use the custom shader</span><br>
+ctx.addShader(<span class="string">'rainbow'</span>, rainbowShader.vertex, rainbowShader.fragment);
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h2>Plasma Effect Demo</h2>
+            <canvas id="plasmaCanvas" width="800" height="400"></canvas>
+            <div class="controls">
+                <button onclick="startPlasma()">Start Plasma</button>
+                <button onclick="stopPlasma()">Stop</button>
+                <button onclick="clearCanvas('plasma')">Clear</button>
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h2>Distortion Effect Demo</h2>
+            <canvas id="distortionCanvas" width="800" height="400"></canvas>
+            <div class="controls">
+                <button onclick="startDistortion()">Start Distortion</button>
+                <button onclick="stopDistortion()">Stop</button>
+                <button onclick="clearCanvas('distortion')">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="src/webgl-canvas.js"></script>
+    <script>
+        // Initialize canvases
+        const rainbowCanvas = document.getElementById('rainbowCanvas');
+        const plasmaCanvas = document.getElementById('plasmaCanvas');
+        const distortionCanvas = document.getElementById('distortionCanvas');
+        
+        const rainbowCtx = new WebGLCanvas(rainbowCanvas);
+        const plasmaCtx = new WebGLCanvas(plasmaCanvas);
+        const distortionCtx = new WebGLCanvas(distortionCanvas);
+        
+        let plasmaAnimationId = null;
+        let distortionAnimationId = null;
+        
+        // Rainbow shader
+        const rainbowShader = {
+            vertex: `
+                attribute vec2 a_position;
+                uniform mat3 u_transform;
+                uniform vec2 u_resolution;
+                varying vec2 v_position;
+                
+                void main() {
+                    vec3 transformed = u_transform * vec3(a_position, 1.0);
+                    vec2 normalized = ((transformed.xy / u_resolution) * 2.0 - 1.0) * vec2(1, -1);
+                    gl_Position = vec4(normalized, 0, 1);
+                    v_position = a_position;
+                }
+            `,
+            fragment: `
+                precision mediump float;
+                uniform float u_time;
+                uniform vec2 u_resolution;
+                varying vec2 v_position;
+                
+                void main() {
+                    vec2 uv = v_position / u_resolution;
+                    float rainbow = sin(uv.x * 20.0 + u_time) * 0.5 + 0.5;
+                    vec3 color = vec3(
+                        sin(rainbow * 6.28),
+                        sin(rainbow * 6.28 + 2.09),
+                        sin(rainbow * 6.28 + 4.18)
+                    ) * 0.5 + 0.5;
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `
+        };
+        
+        // Plasma shader
+        const plasmaShader = {
+            vertex: `
+                attribute vec2 a_position;
+                uniform mat3 u_transform;
+                uniform vec2 u_resolution;
+                varying vec2 v_position;
+                
+                void main() {
+                    vec3 transformed = u_transform * vec3(a_position, 1.0);
+                    vec2 normalized = ((transformed.xy / u_resolution) * 2.0 - 1.0) * vec2(1, -1);
+                    gl_Position = vec4(normalized, 0, 1);
+                    v_position = a_position;
+                }
+            `,
+            fragment: `
+                precision mediump float;
+                uniform float u_time;
+                uniform vec2 u_resolution;
+                varying vec2 v_position;
+                
+                void main() {
+                    vec2 uv = v_position / u_resolution;
+                    uv = uv * 2.0 - 1.0;
+                    
+                    float plasma = sin(uv.x * 10.0 + u_time);
+                    plasma += sin(uv.y * 8.0 + u_time * 1.5);
+                    plasma += sin((uv.x + uv.y) * 6.0 + u_time * 2.0);
+                    plasma += sin(sqrt(uv.x * uv.x + uv.y * uv.y) * 12.0 + u_time * 3.0);
+                    plasma = plasma / 4.0;
+                    
+                    vec3 color = vec3(
+                        sin(plasma * 3.14159) * 0.5 + 0.5,
+                        sin(plasma * 3.14159 + 2.0) * 0.5 + 0.5,
+                        sin(plasma * 3.14159 + 4.0) * 0.5 + 0.5
+                    );
+                    
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `
+        };
+        
+        // Distortion shader
+        const distortionShader = {
+            vertex: `
+                attribute vec2 a_position;
+                uniform mat3 u_transform;
+                uniform vec2 u_resolution;
+                varying vec2 v_position;
+                
+                void main() {
+                    vec3 transformed = u_transform * vec3(a_position, 1.0);
+                    vec2 normalized = ((transformed.xy / u_resolution) * 2.0 - 1.0) * vec2(1, -1);
+                    gl_Position = vec4(normalized, 0, 1);
+                    v_position = a_position;
+                }
+            `,
+            fragment: `
+                precision mediump float;
+                uniform float u_time;
+                uniform vec2 u_resolution;
+                varying vec2 v_position;
+                
+                void main() {
+                    vec2 uv = v_position / u_resolution;
+                    uv = uv * 2.0 - 1.0;
+                    
+                    // Create ripple effect
+                    float dist = length(uv);
+                    float ripple = sin(dist * 20.0 - u_time * 5.0) * 0.1;
+                    uv += normalize(uv) * ripple;
+                    
+                    // Create color based on distorted coordinates
+                    vec3 color = vec3(
+                        abs(sin(uv.x * 5.0 + u_time)),
+                        abs(sin(uv.y * 5.0 + u_time * 1.3)),
+                        abs(sin((uv.x + uv.y) * 3.0 + u_time * 0.7))
+                    );
+                    
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `
+        };
+        
+        // Add custom shaders
+        rainbowCtx.addShader('rainbow', rainbowShader.vertex, rainbowShader.fragment);
+        plasmaCtx.addShader('plasma', plasmaShader.vertex, plasmaShader.fragment);
+        distortionCtx.addShader('distortion', distortionShader.vertex, distortionShader.fragment);
+        
+        // Helper function to draw full-screen quad with custom shader
+        function drawFullScreenQuad(ctx, shaderName, uniforms = {}) {
+            const gl = ctx.gl;
+            const program = ctx.useShader(shaderName);
+            
+            // Create full-screen quad
+            const vertices = new Float32Array([
+                0, 0,
+                ctx.width, 0,
+                0, ctx.height,
+                ctx.width, ctx.height
+            ]);
+            
+            const indices = new Uint16Array([0, 1, 2, 1, 2, 3]);
+            
+            // Set up buffers
+            gl.bindBuffer(gl.ARRAY_BUFFER, ctx.vertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+            
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ctx.indexBuffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+            
+            // Set up attributes
+            const positionLoc = gl.getAttribLocation(program, 'a_position');
+            gl.enableVertexAttribArray(positionLoc);
+            gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+            
+            // Set up uniforms
+            const transformLoc = gl.getUniformLocation(program, 'u_transform');
+            gl.uniformMatrix3fv(transformLoc, false, ctx.state.transform);
+            
+            const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+            gl.uniform2f(resolutionLoc, ctx.width, ctx.height);
+            
+            // Set custom uniforms
+            for (const [name, value] of Object.entries(uniforms)) {
+                const loc = gl.getUniformLocation(program, name);
+                if (loc !== null) {
+                    if (typeof value === 'number') {
+                        gl.uniform1f(loc, value);
+                    } else if (Array.isArray(value)) {
+                        if (value.length === 2) {
+                            gl.uniform2fv(loc, value);
+                        } else if (value.length === 3) {
+                            gl.uniform3fv(loc, value);
+                        } else if (value.length === 4) {
+                            gl.uniform4fv(loc, value);
+                        }
+                    }
+                }
+            }
+            
+            // Draw
+            gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+        }
+        
+        // Rainbow demo
+        function drawRainbow() {
+            rainbowCtx.clear();
+            const time = Date.now() * 0.001;
+            drawFullScreenQuad(rainbowCtx, 'rainbow', {
+                u_time: time
+            });
+        }
+        
+        // Plasma demo
+        function startPlasma() {
+            function animate() {
+                plasmaCtx.clear();
+                const time = Date.now() * 0.001;
+                drawFullScreenQuad(plasmaCtx, 'plasma', {
+                    u_time: time
+                });
+                plasmaAnimationId = requestAnimationFrame(animate);
+            }
+            animate();
+        }
+        
+        function stopPlasma() {
+            if (plasmaAnimationId) {
+                cancelAnimationFrame(plasmaAnimationId);
+                plasmaAnimationId = null;
+            }
+        }
+        
+        // Distortion demo
+        function startDistortion() {
+            function animate() {
+                distortionCtx.clear();
+                const time = Date.now() * 0.001;
+                drawFullScreenQuad(distortionCtx, 'distortion', {
+                    u_time: time
+                });
+                distortionAnimationId = requestAnimationFrame(animate);
+            }
+            animate();
+        }
+        
+        function stopDistortion() {
+            if (distortionAnimationId) {
+                cancelAnimationFrame(distortionAnimationId);
+                distortionAnimationId = null;
+            }
+        }
+        
+        function clearCanvas(type) {
+            switch(type) {
+                case 'rainbow':
+                    rainbowCtx.clear();
+                    break;
+                case 'plasma':
+                    plasmaCtx.clear();
+                    stopPlasma();
+                    break;
+                case 'distortion':
+                    distortionCtx.clear();
+                    stopDistortion();
+                    break;
+            }
+        }
+        
+        // Initial demo
+        drawRainbow();
+    </script>
+</body>
+</html>

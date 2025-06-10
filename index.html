@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Canvas Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        
+        .demo-section {
+            margin: 30px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        canvas {
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            display: block;
+            margin: 20px auto;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            margin: 0 10px;
+            padding: 10px 20px;
+            background: #007acc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #005a9e;
+        }
+        
+        .code-example {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        
+        .highlight {
+            color: #fbb6ce;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebGL Canvas - GPU-Powered 2D Graphics</h1>
+        <p style="text-align: center; color: #666; font-size: 18px;">
+            Easy-to-use WebGL canvas with HTML5 Canvas-like API but with GPU acceleration
+        </p>
+        
+        <div class="demo-section">
+            <h2>Basic Shapes Demo</h2>
+            <canvas id="basicCanvas" width="800" height="400"></canvas>
+            <div class="controls">
+                <button onclick="drawBasicShapes()">Draw Basic Shapes</button>
+                <button onclick="clearCanvas('basic')">Clear</button>
+            </div>
+            
+            <div class="code-example">
+                <div class="highlight">// Basic usage example</div>
+const canvas = document.getElementById('myCanvas');<br>
+const ctx = new WebGLCanvas(canvas);<br><br>
+
+<div class="highlight">// Draw like HTML5 Canvas but with WebGL power!</div>
+ctx.fillStyle = '#ff6b6b';<br>
+ctx.fillRect(50, 50, 200, 100);<br><br>
+
+ctx.fillStyle = '#4ecdc4';<br>
+ctx.fillCircle(400, 100, 60);<br><br>
+
+ctx.strokeStyle = '#45b7d1';<br>
+ctx.lineWidth = 3;<br>
+ctx.drawLine(50, 200, 400, 200);
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h2>Animation Demo</h2>
+            <canvas id="animationCanvas" width="800" height="400"></canvas>
+            <div class="controls">
+                <button onclick="startAnimation()">Start Animation</button>
+                <button onclick="stopAnimation()">Stop Animation</button>
+                <button onclick="clearCanvas('animation')">Clear</button>
+            </div>
+            
+            <div class="code-example">
+                <div class="highlight">// Animation with transforms</div>
+function animate() {<br>
+&nbsp;&nbsp;ctx.clear();<br>
+&nbsp;&nbsp;ctx.save();<br><br>
+&nbsp;&nbsp;<div class="highlight">// Rotate and animate</div><br>
+&nbsp;&nbsp;ctx.translate(400, 200);<br>
+&nbsp;&nbsp;ctx.rotate(time * 0.01);<br>
+&nbsp;&nbsp;ctx.fillStyle = '#ff9ff3';<br>
+&nbsp;&nbsp;ctx.fillRect(-50, -50, 100, 100);<br><br>
+&nbsp;&nbsp;ctx.restore();<br>
+&nbsp;&nbsp;requestAnimationFrame(animate);<br>
+}
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h2>Transform Demo</h2>
+            <canvas id="transformCanvas" width="800" height="400"></canvas>
+            <div class="controls">
+                <button onclick="drawTransforms()">Show Transforms</button>
+                <button onclick="clearCanvas('transform')">Clear</button>
+            </div>
+            
+            <div class="code-example">
+                <div class="highlight">// Transform operations</div>
+ctx.save();<br>
+ctx.translate(100, 100);<br>
+ctx.rotate(Math.PI / 4);<br>
+ctx.scale(1.5, 1.5);<br>
+ctx.fillRect(-25, -25, 50, 50);<br>
+ctx.restore();
+            </div>
+        </div>
+    </div>    <script src="src/webgl-canvas.js"></script>
+    <script>
+        // Wait for DOM to be ready
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize canvases
+            const basicCanvas = document.getElementById('basicCanvas');
+            const animationCanvas = document.getElementById('animationCanvas');
+            const transformCanvas = document.getElementById('transformCanvas');
+            
+            const basicCtx = new WebGLCanvas(basicCanvas);
+            const animationCtx = new WebGLCanvas(animationCanvas);
+            const transformCtx = new WebGLCanvas(transformCanvas);
+            
+            let animationId = null;
+            
+            // Make contexts globally available
+            window.basicCtx = basicCtx;
+            window.animationCtx = animationCtx;
+            window.transformCtx = transformCtx;
+            window.animationId = animationId;
+            
+            // Initial demos
+            drawBasicShapes();
+            drawTransforms();
+        });
+        
+        // Basic shapes demo
+        function drawBasicShapes() {
+            if (!window.basicCtx) return;
+            
+            window.basicCtx.clear();
+              // Red rectangle
+            window.basicCtx.fillStyle = '#ff6b6b';
+            window.basicCtx.fillRect(50, 50, 200, 100);
+            
+            // Blue rectangle with stroke
+            window.basicCtx.fillStyle = '#74b9ff';
+            window.basicCtx.fillRect(300, 50, 150, 100);
+            window.basicCtx.strokeStyle = '#0984e3';
+            window.basicCtx.lineWidth = 3;
+            window.basicCtx.strokeRect(300, 50, 150, 100);
+            
+            // Green circle
+            window.basicCtx.fillStyle = '#00b894';
+            window.basicCtx.fillCircle(125, 250, 60);
+            
+            // Purple circle with stroke
+            window.basicCtx.fillStyle = '#a29bfe';
+            window.basicCtx.fillCircle(375, 250, 50);
+            window.basicCtx.strokeStyle = '#6c5ce7';
+            window.basicCtx.lineWidth = 4;
+            window.basicCtx.strokeCircle(375, 250, 50);
+            
+            // Lines
+            window.basicCtx.strokeStyle = '#fd79a8';
+            window.basicCtx.lineWidth = 5;
+            window.basicCtx.drawLine(500, 50, 700, 150);
+            
+            window.basicCtx.strokeStyle = '#fdcb6e';
+            window.basicCtx.lineWidth = 2;
+            window.basicCtx.drawLine(500, 200, 750, 200);
+            
+            // More complex shapes
+            window.basicCtx.fillStyle = '#55a3ff';
+            for (let i = 0; i < 5; i++) {
+                window.basicCtx.fillCircle(550 + i * 30, 280, 15);
+            }
+        }
+          // Animation demo
+        function startAnimation() {
+            if (!window.animationCtx) return;
+            
+            let startTime = Date.now();
+            
+            function animate() {
+                const currentTime = Date.now();
+                const elapsed = (currentTime - startTime) * 0.001; // Convert to seconds
+                
+                window.animationCtx.clear();
+                
+                // Rotating square
+                window.animationCtx.save();
+                window.animationCtx.translate(200, 200);
+                window.animationCtx.rotate(elapsed);
+                window.animationCtx.fillStyle = '#ff9ff3';
+                window.animationCtx.fillRect(-50, -50, 100, 100);
+                window.animationCtx.restore();
+                
+                // Bouncing circle
+                const bounceY = 200 + Math.sin(elapsed * 3) * 100;
+                window.animationCtx.fillStyle = '#54a0ff';
+                window.animationCtx.fillCircle(400, bounceY, 30);
+                
+                // Pulsing circle
+                const pulseRadius = 30 + Math.sin(elapsed * 4) * 15;
+                window.animationCtx.fillStyle = '#5f27cd';
+                window.animationCtx.fillCircle(600, 200, pulseRadius);
+                
+                // Moving line
+                const lineX = 50 + (Math.sin(elapsed * 2) + 1) * 350;
+                window.animationCtx.strokeStyle = '#00d2d3';
+                window.animationCtx.lineWidth = 4;
+                window.animationCtx.drawLine(lineX, 100, lineX, 300);
+                
+                window.animationId = requestAnimationFrame(animate);
+            }
+            
+            animate();
+        }
+        
+        function stopAnimation() {
+            if (window.animationId) {
+                cancelAnimationFrame(window.animationId);
+                window.animationId = null;
+            }
+        }
+        
+        // Transform demo
+        function drawTransforms() {
+            if (!window.transformCtx) return;
+            
+            window.transformCtx.clear();
+            
+            // Original shape (reference)
+            window.transformCtx.fillStyle = '#ddd';
+            window.transformCtx.fillRect(50, 50, 60, 60);
+            
+            // Translated
+            window.transformCtx.save();
+            window.transformCtx.translate(100, 0);
+            window.transformCtx.fillStyle = '#ff6b6b';
+            window.transformCtx.fillRect(50, 150, 60, 60);
+            window.transformCtx.restore();
+            
+            // Rotated
+            window.transformCtx.save();
+            window.transformCtx.translate(250, 200);
+            window.transformCtx.rotate(Math.PI / 4);
+            window.transformCtx.fillStyle = '#4ecdc4';
+            window.transformCtx.fillRect(-30, -30, 60, 60);
+            window.transformCtx.restore();
+            
+            // Scaled
+            window.transformCtx.save();
+            window.transformCtx.translate(400, 150);
+            window.transformCtx.scale(1.5, 0.8);
+            window.transformCtx.fillStyle = '#45b7d1';
+            window.transformCtx.fillRect(-30, -30, 60, 60);
+            window.transformCtx.restore();
+            
+            // Combined transforms
+            window.transformCtx.save();
+            window.transformCtx.translate(600, 200);
+            window.transformCtx.rotate(Math.PI / 6);
+            window.transformCtx.scale(1.2, 1.2);
+            window.transformCtx.fillStyle = '#f9ca24';
+            window.transformCtx.fillRect(-40, -40, 80, 80);
+            window.transformCtx.restore();
+            
+            // Labels
+            window.transformCtx.fillStyle = '#333';
+            // Note: We'd need text rendering for labels, which could be added later
+        }
+        
+        function clearCanvas(type) {
+            switch(type) {
+                case 'basic':
+                    if (window.basicCtx) window.basicCtx.clear();
+                    break;
+                case 'animation':
+                    if (window.animationCtx) window.animationCtx.clear();
+                    stopAnimation();
+                    break;
+                case 'transform':
+                    if (window.transformCtx) window.transformCtx.clear();
+                    break;
+            }
+        }
+    </script>
+</body>
+</html>

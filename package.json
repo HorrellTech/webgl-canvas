@@ -1,0 +1,26 @@
+{
+  "name": "webgl-canvas",
+  "version": "1.0.0",
+  "description": "A WebGL-powered canvas library with HTML5 Canvas-like API",
+  "main": "src/webgl-canvas.js",
+  "scripts": {
+    "dev": "http-server -p 8080",
+    "build": "rollup -c",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "webgl",
+    "canvas",
+    "graphics",
+    "2d",
+    "gpu",
+    "game",
+    "rendering"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "rollup": "^3.29.4"
+  }
+}
