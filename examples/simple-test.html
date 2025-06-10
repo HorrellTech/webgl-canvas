@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Canvas - Simple Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        canvas {
+            border: 2px solid #4CAF50;
+            border-radius: 8px;
+            margin: 20px;
+        }
+        
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        .info {
+            background: #333;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px auto;
+            max-width: 600px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 WebGL Canvas - Simple Test</h1>
+    
+    <div class="info">
+        <p>This is a simple test to verify the WebGL Canvas library is working correctly.</p>
+        <p><strong>Expected:</strong> You should see canvases with pixel art graphics and working fullscreen buttons.</p>
+    </div>
+    
+    <div>
+        <h3>Regular Canvas (400x300)</h3>
+        <canvas id="regularCanvas" width="400" height="300"></canvas>
+        <br>
+        <button onclick="drawRegular()">Draw Test Pattern</button>
+    </div>
+    
+    <div>
+        <h3>Pixel Art Canvas (64x64 → 256x256)</h3>
+        <canvas id="pixelCanvas" width="64" height="64"></canvas>
+        <br>
+        <button onclick="drawPixel()">Draw Pixel Art</button>
+    </div>
+
+    <script src="../src/webgl-canvas.js"></script>
+    <script>
+        let regularCtx, pixelCtx;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing WebGL Canvas...');
+            
+            try {
+                // Regular canvas
+                regularCtx = new WebGLCanvas(document.getElementById('regularCanvas'), {
+                    enableFullscreen: true
+                });
+                console.log('✅ Regular canvas initialized');
+                
+                // Pixel art canvas
+                pixelCtx = new WebGLCanvas(document.getElementById('pixelCanvas'), {
+                    pixelWidth: 64,
+                    pixelHeight: 64,
+                    pixelScale: 4,
+                    enableFullscreen: true
+                });
+                console.log('✅ Pixel canvas initialized');
+                
+                // Draw initial patterns
+                drawRegular();
+                drawPixel();
+                
+            } catch (error) {
+                console.error('❌ Error initializing WebGL Canvas:', error);
+            }
+        });
+        
+        function drawRegular() {
+            if (!regularCtx) {
+                console.error('Regular canvas not initialized');
+                return;
+            }
+            
+            regularCtx.clear();
+            
+            // Test basic shapes
+            regularCtx.fillStyle = '#ff6b6b';
+            regularCtx.fillRect(50, 50, 100, 80);
+            
+            regularCtx.fillStyle = '#4ecdc4';
+            regularCtx.fillCircle(300, 100, 50);
+            
+            regularCtx.strokeStyle = '#45b7d1';
+            regularCtx.lineWidth = 3;
+            regularCtx.drawLine(50, 200, 350, 200);
+            
+            console.log('✅ Regular pattern drawn');
+        }
+        
+        function drawPixel() {
+            if (!pixelCtx) {
+                console.error('Pixel canvas not initialized');
+                return;
+            }
+            
+            pixelCtx.clear();
+            
+            // Test pixel art (remember: working in 64x64 space)
+            pixelCtx.fillStyle = '#ff6b6b';
+            pixelCtx.fillRect(16, 16, 32, 32);
+            
+            pixelCtx.fillStyle = '#4ecdc4';
+            pixelCtx.fillCircle(32, 32, 8);
+            
+            pixelCtx.fillStyle = '#45b7d1';
+            pixelCtx.fillRect(8, 8, 4, 4);
+            pixelCtx.fillRect(52, 8, 4, 4);
+            pixelCtx.fillRect(8, 52, 4, 4);
+            pixelCtx.fillRect(52, 52, 4, 4);
+            
+            console.log('✅ Pixel art drawn');
+        }
+        
+        // Make functions global for buttons
+        window.drawRegular = drawRegular;
+        window.drawPixel = drawPixel;
+    </script>
+</body>
+</html>

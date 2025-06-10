@@ -4,12 +4,21 @@
  */
 class WebGLCanvas {    constructor(canvas, options = {}) {
         this.canvas = canvas;
-        this.width = canvas.width;
-        this.height = canvas.height;
+        
+        // Handle pixel scaling options
         this.options = {
             enableFullscreen: options.enableFullscreen || false,
+            pixelWidth: options.pixelWidth || canvas.width,
+            pixelHeight: options.pixelHeight || canvas.height,
+            pixelScale: options.pixelScale || 1,
             ...options
         };
+        
+        // Set up pixel scaling
+        this.setupPixelScaling();
+        
+        this.width = this.canvas.width;
+        this.height = this.canvas.height;
         
         // WebGL context
         this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -49,8 +58,33 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         
         // Setup fullscreen if enabled
         if (this.options.enableFullscreen) {
-            this.setupFullscreen();
-        }
+            this.setupFullscreen();        }
+    }
+    
+    /*
+     * Setup pixel scaling for pixel art games
+     * Configures canvas internal resolution vs display size
+     */
+    setupPixelScaling() {
+        // Set canvas internal resolution
+        this.canvas.width = this.options.pixelWidth;
+        this.canvas.height = this.options.pixelHeight;
+        
+        // Set display size (CSS size)
+        const displayWidth = this.options.pixelWidth * this.options.pixelScale;
+        const displayHeight = this.options.pixelHeight * this.options.pixelScale;
+        
+        this.canvas.style.width = `${displayWidth}px`;
+        this.canvas.style.height = `${displayHeight}px`;
+        
+        // Ensure pixel-perfect scaling
+        this.canvas.style.imageRendering = 'pixelated';
+        this.canvas.style.imageRendering = '-moz-crisp-edges';
+        this.canvas.style.imageRendering = 'crisp-edges';
+        
+        // Store display dimensions
+        this.displayWidth = displayWidth;
+        this.displayHeight = displayHeight;
     }
     
     /*
@@ -795,8 +829,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             wrapper.className = 'webgl-canvas-wrapper';            wrapper.style.cssText = `
                 position: relative;
                 display: inline-block;
-                width: ${this.canvas.offsetWidth || this.canvas.width}px;
-                height: ${this.canvas.offsetHeight || this.canvas.height}px;
+                width: ${this.displayWidth || this.canvas.offsetWidth || this.canvas.width}px;
+                height: ${this.displayHeight || this.canvas.offsetHeight || this.canvas.height}px;
                 margin: 0;
                 padding: 0;
             `;
@@ -879,8 +913,7 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             margin: this.canvas.style.margin,
             transform: this.canvas.style.transform
         };
-        
-        // Store original canvas dimensions
+          // Store original canvas dimensions (these stay the same for drawing)
         this.originalDimensions = {
             width: this.canvas.width,
             height: this.canvas.height,
@@ -888,26 +921,44 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             cssHeight: this.canvas.style.height
         };
         
-        // Apply fullscreen styles
+        // Calculate scale to fit screen while maintaining aspect ratio
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
+        const canvasAspect = this.canvas.width / this.canvas.height;
+        const screenAspect = screenWidth / screenHeight;
+        
+        let scaledWidth, scaledHeight;
+        
+        if (canvasAspect > screenAspect) {
+            // Canvas is wider than screen - fit to width
+            scaledWidth = screenWidth;
+            scaledHeight = screenWidth / canvasAspect;
+        } else {
+            // Canvas is taller than screen - fit to height
+            scaledHeight = screenHeight;
+            scaledWidth = screenHeight * canvasAspect;
+        }
+        
+        // Center the canvas on screen
+        const left = (screenWidth - scaledWidth) / 2;
+        const top = (screenHeight - scaledHeight) / 2;
+        
+        // Apply fullscreen styles with scaling
         this.canvas.style.cssText += `
             position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
+            top: ${top}px !important;
+            left: ${left}px !important;
+            width: ${scaledWidth}px !important;
+            height: ${scaledHeight}px !important;
             z-index: 9999 !important;
             margin: 0 !important;
             border-radius: 0 !important;
+            image-rendering: pixelated !important;
+            image-rendering: -moz-crisp-edges !important;
+            image-rendering: crisp-edges !important;
         `;
         
-        // Update canvas dimensions
-        this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
-        this.width = window.innerWidth;
-        this.height = window.innerHeight;
-        
-        // Update WebGL viewport
-        this.gl.viewport(0, 0, this.width, this.height);
+        // Canvas drawing dimensions stay the same - no need to update WebGL viewport
           // Update button position for fullscreen
         if (this.fullscreenButton) {
             this.fullscreenButton.style.position = 'fixed';
@@ -963,11 +1014,10 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         } else {
             this.canvas.style.height = '';
         }
-        
-        // Update wrapper size if we have a wrapper
+          // Update wrapper size if we have a wrapper
         if (this.wrapper && this.wrapper.classList.contains('webgl-canvas-wrapper')) {
-            this.wrapper.style.width = `${this.canvas.offsetWidth || this.canvas.width}px`;
-            this.wrapper.style.height = `${this.canvas.offsetHeight || this.canvas.height}px`;
+            this.wrapper.style.width = `${this.displayWidth || this.canvas.offsetWidth || this.canvas.width}px`;
+            this.wrapper.style.height = `${this.displayHeight || this.canvas.offsetHeight || this.canvas.height}px`;
         }
         
         // Update WebGL viewport

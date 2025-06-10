@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Canvas - Pixel Scaling & Fullscreen Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            padding: 20px;
+            margin: 0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #4CAF50;
+        }
+        
+        .demo-section {
+            background: #333;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .demo-section h3 {
+            color: #4CAF50;
+            margin-top: 0;
+        }
+        
+        .canvas-container {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .canvas-wrapper {
+            text-align: center;
+        }
+        
+        .canvas-title {
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .canvas-info {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #ccc;
+        }
+        
+        canvas {
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
+        
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        .info {
+            background: #444;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .feature-list li {
+            padding: 5px 0;
+            border-bottom: 1px solid #555;
+        }
+        
+        .feature-list li:last-child {
+            border-bottom: none;
+        }
+        
+        .highlight {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 WebGL Canvas - Pixel Scaling & Fullscreen Test</h1>
+        
+        <div class="demo-section">
+            <h3>✨ New Features</h3>
+            <ul class="feature-list">
+                <li><span class="highlight">Pixel Scaling:</span> Set drawing resolution independent of display size (perfect for pixel art games)</li>
+                <li><span class="highlight">Smart Fullscreen:</span> Scales canvas to fit screen while maintaining aspect ratio and original drawing dimensions</li>
+                <li><span class="highlight">Pixel-Perfect Rendering:</span> Crisp scaling for retro/pixel art aesthetics</li>
+            </ul>
+        </div>
+        
+        <div class="demo-section">
+            <h3>🎨 Pixel Art Canvas Examples</h3>
+            <div class="canvas-container">
+                <div class="canvas-wrapper">
+                    <div class="canvas-title">Low Resolution (64x64)</div>
+                    <canvas id="pixelCanvas1" width="64" height="64"></canvas>
+                    <div class="canvas-info">Drawing: 64x64px<br>Display: 256x256px (4x scale)</div>
+                </div>
+                
+                <div class="canvas-wrapper">
+                    <div class="canvas-title">Medium Resolution (128x128)</div>
+                    <canvas id="pixelCanvas2" width="128" height="128"></canvas>
+                    <div class="canvas-info">Drawing: 128x128px<br>Display: 384x384px (3x scale)</div>
+                </div>
+                
+                <div class="canvas-wrapper">
+                    <div class="canvas-title">Custom Dimensions (200x150)</div>
+                    <canvas id="pixelCanvas3" width="200" height="150"></canvas>
+                    <div class="canvas-info">Drawing: 200x150px<br>Display: 400x300px (2x scale)</div>
+                </div>
+            </div>
+            
+            <div class="test-buttons">
+                <button onclick="drawPixelArt()">Draw Pixel Art</button>
+                <button onclick="animatePixelArt()">Start Animation</button>
+                <button onclick="stopAnimation()">Stop Animation</button>
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>📺 Fullscreen Scaling Test</h3>
+            <div class="canvas-container">
+                <div class="canvas-wrapper">
+                    <div class="canvas-title">Fullscreen Test Canvas</div>
+                    <canvas id="fullscreenCanvas" width="400" height="300"></canvas>
+                    <div class="canvas-info">Drawing: 400x300px<br>Fullscreen: Scales to fit screen maintaining aspect ratio</div>
+                </div>
+            </div>
+            
+            <div class="info">
+                <strong>Fullscreen Test Instructions:</strong>
+                <ul>
+                    <li>Click the fullscreen button or use the buttons below</li>
+                    <li>Notice how the canvas scales to fit your screen while maintaining 4:3 aspect ratio</li>
+                    <li>The drawing resolution stays 400x300 - only the display size changes</li>
+                    <li>Use ESC or click the button again to exit fullscreen</li>
+                </ul>
+            </div>
+            
+            <div class="test-buttons">
+                <button onclick="fullscreenCtx.toggleFullscreen()">Toggle Fullscreen</button>
+                <button onclick="fullscreenCtx.enterFullscreen()">Enter Fullscreen</button>
+                <button onclick="fullscreenCtx.exitFullscreen()">Exit Fullscreen</button>
+                <button onclick="drawFullscreenPattern()">Redraw Pattern</button>
+            </div>
+        </div>
+    </div>    <script src="../src/webgl-canvas.js"></script>
+    <script>
+        // Animation variables - declare at top
+        let animationId = null;
+        let animationTime = 0;
+        let pixelCanvas1, pixelCanvas2, pixelCanvas3, fullscreenCtx;
+        
+        // Initialize when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Pixel art canvases with different scaling
+            pixelCanvas1 = new WebGLCanvas(document.getElementById('pixelCanvas1'), {
+                pixelWidth: 64,
+                pixelHeight: 64,
+                pixelScale: 4,
+                enableFullscreen: true
+            });
+            
+            pixelCanvas2 = new WebGLCanvas(document.getElementById('pixelCanvas2'), {
+                pixelWidth: 128,
+                pixelHeight: 128,
+                pixelScale: 3,
+                enableFullscreen: true
+            });
+            
+            pixelCanvas3 = new WebGLCanvas(document.getElementById('pixelCanvas3'), {
+                pixelWidth: 200,
+                pixelHeight: 150,
+                pixelScale: 2,
+                enableFullscreen: true
+            });
+            
+            // Fullscreen test canvas
+            fullscreenCtx = new WebGLCanvas(document.getElementById('fullscreenCanvas'), {
+                enableFullscreen: true
+            });
+            
+            // Initial drawings
+            drawPixelArt();
+            drawFullscreenPattern();
+              // Listen for fullscreen events
+            document.getElementById('fullscreenCanvas').addEventListener('enterFullscreen', () => {
+                console.log('✅ Entered fullscreen - drawing dimensions preserved');
+            });
+            
+            document.getElementById('fullscreenCanvas').addEventListener('exitFullscreen', () => {
+                console.log('✅ Exited fullscreen - restored to original size');
+            });
+            
+            // Make functions and variables global for button access
+            window.pixelCanvas1 = pixelCanvas1;
+            window.pixelCanvas2 = pixelCanvas2;
+            window.pixelCanvas3 = pixelCanvas3;
+            window.fullscreenCtx = fullscreenCtx;
+        });
+        
+        function drawPixelArt() {
+            // Draw pixel art on canvas 1 (64x64)
+            pixelCanvas1.clear();
+            pixelCanvas1.fillStyle = '#ff6b6b';
+            pixelCanvas1.fillRect(16, 16, 32, 32);
+            pixelCanvas1.fillStyle = '#4ecdc4';
+            pixelCanvas1.fillCircle(32, 32, 8);
+            pixelCanvas1.fillStyle = '#45b7d1';
+            pixelCanvas1.fillRect(8, 8, 4, 4);
+            pixelCanvas1.fillRect(52, 8, 4, 4);
+            pixelCanvas1.fillRect(8, 52, 4, 4);
+            pixelCanvas1.fillRect(52, 52, 4, 4);
+            
+            // Draw pixel art on canvas 2 (128x128)
+            pixelCanvas2.clear();
+            for (let x = 0; x < 16; x++) {
+                for (let y = 0; y < 16; y++) {
+                    const color = `hsl(${(x + y) * 20}, 70%, 60%)`;
+                    pixelCanvas2.fillStyle = color;
+                    pixelCanvas2.fillRect(x * 8, y * 8, 8, 8);
+                }
+            }
+            
+            // Draw pixel art on canvas 3 (200x150)
+            pixelCanvas3.clear();
+            // Create a simple pixel art scene
+            pixelCanvas3.fillStyle = '#87CEEB'; // Sky
+            pixelCanvas3.fillRect(0, 0, 200, 100);
+            
+            pixelCanvas3.fillStyle = '#228B22'; // Ground
+            pixelCanvas3.fillRect(0, 100, 200, 50);
+            
+            pixelCanvas3.fillStyle = '#8B4513'; // Tree trunk
+            pixelCanvas3.fillRect(80, 80, 10, 30);
+            
+            pixelCanvas3.fillStyle = '#228B22'; // Tree leaves
+            pixelCanvas3.fillCircle(85, 75, 15);
+            
+            pixelCanvas3.fillStyle = '#FFD700'; // Sun
+            pixelCanvas3.fillCircle(170, 30, 12);
+            
+            pixelCanvas3.fillStyle = '#DC143C'; // House
+            pixelCanvas3.fillRect(120, 90, 40, 30);
+            
+            pixelCanvas3.fillStyle = '#8B4513'; // Roof
+            pixelCanvas3.fillRect(115, 85, 50, 10);
+        }
+        
+        function animatePixelArt() {
+            if (animationId) return; // Already animating
+            
+            function animate() {
+                animationTime += 0.05;
+                
+                // Animate canvas 1 - rotating square
+                pixelCanvas1.clear();
+                pixelCanvas1.save();
+                pixelCanvas1.translate(32, 32);
+                pixelCanvas1.rotate(animationTime);
+                pixelCanvas1.fillStyle = '#ff6b6b';
+                pixelCanvas1.fillRect(-8, -8, 16, 16);
+                pixelCanvas1.restore();
+                
+                // Animate canvas 2 - color wave
+                pixelCanvas2.clear();
+                for (let x = 0; x < 16; x++) {
+                    for (let y = 0; y < 16; y++) {
+                        const hue = (x + y + animationTime * 10) * 20;
+                        const color = `hsl(${hue % 360}, 70%, 60%)`;
+                        pixelCanvas2.fillStyle = color;
+                        pixelCanvas2.fillRect(x * 8, y * 8, 8, 8);
+                    }
+                }
+                
+                // Animate canvas 3 - moving sun
+                pixelCanvas3.clear();
+                pixelCanvas3.fillStyle = '#87CEEB';
+                pixelCanvas3.fillRect(0, 0, 200, 100);
+                
+                pixelCanvas3.fillStyle = '#228B22';
+                pixelCanvas3.fillRect(0, 100, 200, 50);
+                
+                pixelCanvas3.fillStyle = '#8B4513';
+                pixelCanvas3.fillRect(80, 80, 10, 30);
+                
+                pixelCanvas3.fillStyle = '#228B22';
+                pixelCanvas3.fillCircle(85, 75, 15);
+                
+                // Moving sun
+                const sunX = 170 + Math.sin(animationTime) * 20;
+                const sunY = 30 + Math.cos(animationTime * 0.5) * 10;
+                pixelCanvas3.fillStyle = '#FFD700';
+                pixelCanvas3.fillCircle(sunX, sunY, 12);
+                
+                pixelCanvas3.fillStyle = '#DC143C';
+                pixelCanvas3.fillRect(120, 90, 40, 30);
+                
+                pixelCanvas3.fillStyle = '#8B4513';
+                pixelCanvas3.fillRect(115, 85, 50, 10);
+                
+                animationId = requestAnimationFrame(animate);
+            }
+            
+            animate();
+        }
+        
+        function stopAnimation() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+        }
+        
+        function drawFullscreenPattern() {
+            fullscreenCtx.clear();
+            
+            // Draw a test pattern
+            const width = fullscreenCtx.canvas.width;
+            const height = fullscreenCtx.canvas.height;
+            
+            // Background grid
+            fullscreenCtx.strokeStyle = '#333';
+            fullscreenCtx.lineWidth = 1;
+            for (let x = 0; x < width; x += 20) {
+                fullscreenCtx.drawLine(x, 0, x, height);
+            }
+            for (let y = 0; y < height; y += 20) {
+                fullscreenCtx.drawLine(0, y, width, y);
+            }
+            
+            // Colorful shapes
+            fullscreenCtx.fillStyle = '#ff6b6b';
+            fullscreenCtx.fillRect(50, 50, 100, 80);
+            
+            fullscreenCtx.fillStyle = '#4ecdc4';
+            fullscreenCtx.fillCircle(width - 100, 100, 50);
+            
+            fullscreenCtx.fillStyle = '#45b7d1';
+            fullscreenCtx.fillCircle(100, height - 100, 40);
+            
+            fullscreenCtx.fillStyle = '#ffd93d';
+            fullscreenCtx.fillRect(width - 150, height - 100, 80, 60);
+            
+            // Corner markers
+            fullscreenCtx.fillStyle = '#ff1744';
+            fullscreenCtx.fillRect(0, 0, 20, 20); // Top-left
+            fullscreenCtx.fillRect(width - 20, 0, 20, 20); // Top-right
+            fullscreenCtx.fillRect(0, height - 20, 20, 20); // Bottom-left
+            fullscreenCtx.fillRect(width - 20, height - 20, 20, 20); // Bottom-right
+            
+            // Center crosshair
+            fullscreenCtx.strokeStyle = '#ffffff';
+            fullscreenCtx.lineWidth = 2;
+            fullscreenCtx.drawLine(width/2 - 20, height/2, width/2 + 20, height/2);
+            fullscreenCtx.drawLine(width/2, height/2 - 20, width/2, height/2 + 20);        }
+        
+        // Make functions global for button access (variables are assigned in DOMContentLoaded)
+        window.drawPixelArt = drawPixelArt;
+        window.animatePixelArt = animatePixelArt;
+        window.stopAnimation = stopAnimation;
+        window.drawFullscreenPattern = drawFullscreenPattern;
+    </script>
+</body>
+</html>

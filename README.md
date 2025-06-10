@@ -48,7 +48,7 @@ A powerful, easy-to-use WebGL-powered 2D graphics library with an HTML5 Canvas-l
 
 ### Fullscreen Feature
 
-Enable fullscreen mode for immersive experiences:
+Enable fullscreen mode with smart scaling that preserves drawing dimensions:
 
 ```javascript
 const canvas = document.getElementById('myCanvas');
@@ -59,10 +59,13 @@ const ctx = new WebGLCanvas(canvas, {
 // Listen for fullscreen events
 canvas.addEventListener('enterFullscreen', () => {
     console.log('Entered fullscreen mode');
+    // Canvas is scaled to fit screen while maintaining aspect ratio
+    // Drawing dimensions remain unchanged (e.g., still 800x600 internally)
 });
 
 canvas.addEventListener('exitFullscreen', () => {
     console.log('Exited fullscreen mode');
+    // Canvas returns to original display size
 });
 
 // Programmatic fullscreen control
@@ -70,6 +73,12 @@ ctx.toggleFullscreen();  // Toggle fullscreen
 ctx.enterFullscreen();   // Enter fullscreen
 ctx.exitFullscreen();    // Exit fullscreen
 ```
+
+**Fullscreen Behavior:**
+- Scales canvas to fit screen while maintaining aspect ratio
+- Centers canvas on screen with black bars if needed
+- Preserves original drawing resolution (no stretching)
+- Perfect for games that need consistent coordinates
 
 ### Animation Example
 
@@ -101,12 +110,65 @@ function animate() {
 animate();
 ```
 
+### Pixel Art Games
+
+Perfect for retro-style games with crisp pixel scaling:
+
+```javascript
+// Create a low-resolution canvas that displays scaled up
+const canvas = document.getElementById('gameCanvas');
+const ctx = new WebGLCanvas(canvas, {
+    pixelWidth: 160,     // Game resolution: 160x120 (retro)
+    pixelHeight: 120,
+    pixelScale: 4,       // Display size: 640x480 (4x larger)
+    enableFullscreen: true
+});
+
+// Game objects work in the 160x120 coordinate space
+class Player {
+    constructor() {
+        this.x = 80;  // Center of 160px width
+        this.y = 60;  // Center of 120px height
+        this.size = 8;
+    }
+    
+    render(ctx) {
+        ctx.fillStyle = '#ff6b6b';
+        ctx.fillRect(this.x - this.size/2, this.y - this.size/2, this.size, this.size);
+    }
+}
+
+// Crisp pixel art rendering - no blurry scaling!
+const player = new Player();
+player.render(ctx);
+```
+
 ## 🎨 API Reference
 
 ### Constructor
 
 ```javascript
 const ctx = new WebGLCanvas(canvas, options = {});
+```
+
+**Options:**
+- `enableFullscreen: boolean` - Enable fullscreen button (default: false)
+- `pixelWidth: number` - Internal drawing width (default: canvas.width)
+- `pixelHeight: number` - Internal drawing height (default: canvas.height)  
+- `pixelScale: number` - Display scale multiplier (default: 1)
+
+**Pixel Scaling Example:**
+```javascript
+// Create a 64x64 pixel art canvas displayed at 256x256 (4x scale)
+const ctx = new WebGLCanvas(canvas, {
+    pixelWidth: 64,
+    pixelHeight: 64,
+    pixelScale: 4,
+    enableFullscreen: true
+});
+
+// Draw at low resolution, display scaled up with crisp pixels
+ctx.fillRect(16, 16, 32, 32); // Draws a 32x32 rectangle in the 64x64 space
 ```
 
 ### Drawing Methods
