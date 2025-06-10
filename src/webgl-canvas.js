@@ -130,8 +130,7 @@ class WebGLCanvas {
         * These shaders can be used for basic shapes and effects
         * Includes basic vertex shader and fragment shaders for solid colors and circles
     */
-    createBuiltInShaders() {
-        // Basic vertex shader
+    createBuiltInShaders() {        // Basic vertex shader
         const basicVertexShader = `
             precision mediump float;
             attribute vec2 a_position;
@@ -139,8 +138,15 @@ class WebGLCanvas {
             uniform vec2 u_resolution;
             
             void main() {
+                // Apply transform matrix
                 vec3 transformed = u_transform * vec3(a_position, 1.0);
-                vec2 normalized = ((transformed.xy / u_resolution) * 2.0 - 1.0) * vec2(1, -1);
+                
+                // Convert to normalized device coordinates (-1 to 1)
+                vec2 normalized = (transformed.xy / u_resolution) * 2.0 - 1.0;
+                
+                // Flip Y coordinate to match Canvas coordinate system
+                normalized.y = -normalized.y;
+                
                 gl_Position = vec4(normalized, 0, 1);
             }
         `;
@@ -173,9 +179,49 @@ class WebGLCanvas {
                 gl_FragColor = u_color;
             }
         `;
+          // Texture vertex shader
+        const textureVertexShader = `
+            precision mediump float;
+            attribute vec2 a_position;
+            attribute vec2 a_texCoord;
+            uniform mat3 u_transform;
+            uniform vec2 u_resolution;
+            varying vec2 v_texCoord;
+            
+            void main() {
+                // Apply transform matrix
+                vec3 transformed = u_transform * vec3(a_position, 1.0);
+                
+                // Convert to normalized device coordinates (-1 to 1)
+                vec2 normalized = (transformed.xy / u_resolution) * 2.0 - 1.0;
+                
+                // Flip Y coordinate to match Canvas coordinate system
+                normalized.y = -normalized.y;
+                
+                gl_Position = vec4(normalized, 0, 1);
+                v_texCoord = a_texCoord;
+            }
+        `;
+        
+        // Texture fragment shader
+        const textureFragmentShader = `
+            precision mediump float;
+            uniform sampler2D u_texture;
+            uniform vec4 u_tint;
+            varying vec2 v_texCoord;
+            
+            void main() {
+                vec4 texColor = texture2D(u_texture, v_texCoord);
+                gl_FragColor = texColor * u_tint;
+            }
+        `;
         
         this.shaders.basic = this.createShaderProgram(basicVertexShader, basicFragmentShader);
         this.shaders.circle = this.createShaderProgram(basicVertexShader, circleFragmentShader);
+        this.shaders.texture = this.createShaderProgram(textureVertexShader, textureFragmentShader);
+        
+        // Create texture coordinate buffer
+        this.texCoordBuffer = this.gl.createBuffer();
     }
     
     // Canvas-like API methods
@@ -489,9 +535,7 @@ class WebGLCanvas {
         
         gl.lineWidth(this.state.lineWidth);
         gl.drawArrays(gl.LINES, 0, 2);
-    }
-    
-    /*
+    }    /*
         * Translate the canvas
         * Applies a translation transformation to the current state
         * @param {number} x - X translation
@@ -499,9 +543,9 @@ class WebGLCanvas {
     */
     translate(x, y) {
         const translateMatrix = [
-            1, 0, x,
-            0, 1, y,
-            0, 0, 1
+            1, 0, 0,
+            0, 1, 0,
+            x, y, 1
         ];
         this.state.transform = this.multiplyMatrix(this.state.transform, translateMatrix);
     }
@@ -575,6 +619,131 @@ class WebGLCanvas {
         this.width = width;
         this.height = height;
         this.gl.viewport(0, 0, width, height);
+    }
+    
+    // Image/Texture support
+    
+    // Load and create texture from image
+    loadTexture(image) {
+        const gl = this.gl;
+        const texture = gl.createTexture();
+        
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        
+        // Set texture parameters
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        
+        return texture;
+    }
+    
+    // Load image from URL and return promise
+    loadImage(url) {
+        return new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => {
+                const texture = this.loadTexture(image);
+                resolve({ image, texture, width: image.width, height: image.height });
+            };
+            image.onerror = reject;
+            image.crossOrigin = 'anonymous'; // Enable CORS
+            image.src = url;
+        });
+    }
+    
+    // Draw image/texture
+    drawImage(texture, sx = 0, sy = 0, sw = null, sh = null, dx = 0, dy = 0, dw = null, dh = null) {
+        const gl = this.gl;
+        const program = this.shaders.texture;
+        
+        gl.useProgram(program);
+        
+        // Handle different parameter combinations like Canvas drawImage
+        let sourceX = sx, sourceY = sy, sourceWidth = sw, sourceHeight = sh;
+        let destX = dx, destY = dy, destWidth = dw, destHeight = dh;
+        
+        if (arguments.length === 4) {
+            // drawImage(texture, dx, dy, dw, dh)
+            destX = sx;
+            destY = sy;
+            destWidth = sw;
+            destHeight = sh;
+            sourceX = 0;
+            sourceY = 0;
+            sourceWidth = texture.width || 1;
+            sourceHeight = texture.height || 1;
+        } else if (arguments.length === 3) {
+            // drawImage(texture, dx, dy)
+            destX = sx;
+            destY = sy;
+            destWidth = texture.width || 1;
+            destHeight = texture.height || 1;
+            sourceX = 0;
+            sourceY = 0;
+            sourceWidth = texture.width || 1;
+            sourceHeight = texture.height || 1;
+        }
+        
+        // Create vertices for the destination rectangle
+        const vertices = new Float32Array([
+            destX, destY,
+            destX + destWidth, destY,
+            destX, destY + destHeight,
+            destX + destWidth, destY + destHeight
+        ]);
+        
+        // Create texture coordinates (mapping source rectangle to destination)
+        const texCoords = new Float32Array([
+            sourceX / (texture.width || 1), sourceY / (texture.height || 1),
+            (sourceX + sourceWidth) / (texture.width || 1), sourceY / (texture.height || 1),
+            sourceX / (texture.width || 1), (sourceY + sourceHeight) / (texture.height || 1),
+            (sourceX + sourceWidth) / (texture.width || 1), (sourceY + sourceHeight) / (texture.height || 1)
+        ]);
+        
+        const indices = new Uint16Array([0, 1, 2, 1, 2, 3]);
+        
+        // Set up vertex buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        
+        // Set up texture coordinate buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+        
+        const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
+        gl.enableVertexAttribArray(texCoordLoc);
+        gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
+        
+        // Set up index buffer
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+        
+        // Set uniforms
+        const transformLoc = gl.getUniformLocation(program, 'u_transform');
+        gl.uniformMatrix3fv(transformLoc, false, this.state.transform);
+        
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        gl.uniform2f(resolutionLoc, this.width, this.height);
+        
+        const tintLoc = gl.getUniformLocation(program, 'u_tint');
+        gl.uniform4f(tintLoc, 1, 1, 1, 1); // White tint (no change)
+        
+        // Bind texture
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture.texture || texture);
+        
+        const textureLoc = gl.getUniformLocation(program, 'u_texture');
+        gl.uniform1i(textureLoc, 0);
+        
+        // Draw
+        gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
     }
 }
 
