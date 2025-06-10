@@ -40,12 +40,19 @@ class WebGLCanvas {
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
     }
     
+    /*
+        * Initialize WebGL settings
+        * Set clear color to transparent
+    */
     init() {
         const gl = this.gl;
         gl.clearColor(0, 0, 0, 0); // Transparent background
     }
     
-    // Utility function to create identity matrix
+    /*
+        * Create an identity matrix
+        * Used for initial transformations
+    */  
     createIdentityMatrix() {
         return [
             1, 0, 0,
@@ -54,7 +61,13 @@ class WebGLCanvas {
         ];
     }
     
-    // Matrix multiplication
+    /*        
+        * Multiply two 3x3 matrices
+        * Used for combining transformations
+        * @param {Array} a - First matrix (3x3)
+        * @param {Array} b - Second matrix (3x3)
+        * @return {Array} - Resulting matrix (3x3)
+    */
     multiplyMatrix(a, b) {
         const result = new Array(9);
         for (let i = 0; i < 3; i++) {
@@ -68,7 +81,13 @@ class WebGLCanvas {
         return result;
     }
     
-    // Create shader program
+    /*
+        * Create a shader program from vertex and fragment shader sources
+        * Compiles shaders and links them into a program
+        * @param {string} vertexShaderSource - GLSL source code for the vertex shader
+        * @param {string} fragmentShaderSource - GLSL source code for the fragment shader
+        * @return {WebGLProgram} - Compiled and linked shader program
+    */
     createShaderProgram(vertexShaderSource, fragmentShaderSource) {
         const gl = this.gl;
         
@@ -87,6 +106,13 @@ class WebGLCanvas {
         return program;
     }
     
+    /*
+        * Create a shader of a specific type (vertex or fragment)
+        * Compiles the shader source code
+        * @param {number} type - Shader type (gl.VERTEX_SHADER or gl.FRAGMENT_SHADER)
+        * @param {string} source - GLSL source code for the shader
+        * @return {WebGLShader} - Compiled shader
+    */
     createShader(type, source) {
         const gl = this.gl;
         const shader = gl.createShader(type);
@@ -99,7 +125,11 @@ class WebGLCanvas {
         
         return shader;
     }
-      // Create built-in shaders
+    /*
+        * Create built-in shaders for common effects
+        * These shaders can be used for basic shapes and effects
+        * Includes basic vertex shader and fragment shaders for solid colors and circles
+    */
     createBuiltInShaders() {
         // Basic vertex shader
         const basicVertexShader = `
@@ -150,39 +180,73 @@ class WebGLCanvas {
     
     // Canvas-like API methods
     
-    // Clear the canvas
+    /*
+        * Clear the canvas
+        * Sets the clear color to transparent and clears the color buffer
+    */ 
     clear() {
         this.gl.clear(this.gl.COLOR_BUFFER_BIT);
     }
     
-    // Set fill style (color)
+    /*
+        * Set fill style (color)
+        * Accepts color in hex, rgb, rgba, or array format
+        * @param {string|Array} color - Color value
+    */
     set fillStyle(color) {
         this.state.fillStyle = this.parseColor(color);
     }
     
+    /*
+        * Get current fill style
+        * Returns the fill style as an RGBA array
+        * @return {Array}
+    */
     get fillStyle() {
         return this.state.fillStyle;
     }
     
-    // Set stroke style (color)
+    /*
+        * Set stroke style (color)
+        * Accepts color in hex, rgb, rgba, or array format
+        * @param {string|Array} color - Color value
+    */
     set strokeStyle(color) {
         this.state.strokeStyle = this.parseColor(color);
     }
     
+    /*
+        * Get current stroke style
+        * Returns the stroke style as an RGBA array
+        * @return {Array}
+    */ 
     get strokeStyle() {
         return this.state.strokeStyle;
     }
     
-    // Set line width
+    /*
+        * Set line width for strokes
+        * @param {number} width - Line width in pixels
+    */
     set lineWidth(width) {
         this.state.lineWidth = width;
     }
     
+    /*
+        * Get current line width
+        * Returns the line width in pixels
+        * @return {number}
+    */
     get lineWidth() {
         return this.state.lineWidth;
     }
     
-    // Parse color string to RGBA array
+    /*
+        * Parse color input
+        * Converts hex, rgb, rgba, or array formats to RGBA array
+        * @param {string|Array} color - Color value
+        * @return {Array} - RGBA array
+    */
     parseColor(color) {
         if (Array.isArray(color)) return color;
         
@@ -211,7 +275,10 @@ class WebGLCanvas {
         return [1, 1, 1, 1];
     }
     
-    // Save current state
+    /*
+        * Save the current state
+        * Saves fillStyle, strokeStyle, lineWidth, and transform to the state stack
+    */
     save() {
         this.stateStack.push({
             fillStyle: [...this.state.fillStyle],
@@ -221,7 +288,10 @@ class WebGLCanvas {
         });
     }
     
-    // Restore previous state
+    /*
+        * Restore the last saved state
+        * Restores fillStyle, strokeStyle, lineWidth, and transform from the state stack
+    */
     restore() {
         if (this.stateStack.length > 0) {
             this.state = this.stateStack.pop();
@@ -230,17 +300,37 @@ class WebGLCanvas {
     
     // Drawing methods
     
-    // Fill rectangle
+    /*
+        * Fill rectangle
+        * @param {number} x - X coordinate of the rectangle
+        * @param {number} y - Y coordinate of the rectangle
+        * @param {number} width - Width of the rectangle    
+        * @param {number} height - Height of the rectangle
+    */
     fillRect(x, y, width, height) {
         this.drawRect(x, y, width, height, true);
     }
     
-    // Stroke rectangle
+    /*
+        * Stroke rectangle
+        * @param {number} x - X coordinate of the rectangle
+        * @param {number} y - Y coordinate of the rectangle
+        * @param {number} width - Width of the rectangle    
+        * @param {number} height - Height of the rectangle
+    */
     strokeRect(x, y, width, height) {
         this.drawRect(x, y, width, height, false);
     }
     
-    // Internal rectangle drawing
+    /*
+        * Internal rectangle drawing method
+        * Draws a rectangle using the current fillStyle or strokeStyle
+        * @param {number} x - X coordinate of the rectangle
+        * @param {number} y - Y coordinate of the rectangle
+        * @param {number} width - Width of the rectangle
+        * @param {number} height - Height of the rectangle
+        * @param {boolean} fill - Whether to fill (true) or stroke (false) the rectangle
+    */
     drawRect(x, y, width, height, fill = true) {
         const gl = this.gl;
         const program = this.shaders.basic;
@@ -290,17 +380,34 @@ class WebGLCanvas {
         }
     }
     
-    // Fill circle
+    /*
+        * Fill circle
+        * @param {number} x - X coordinate of the circle center
+        * @param {number} y - Y coordinate of the circle center
+        * @param {number} radius - Radius of the circle
+    */
     fillCircle(x, y, radius) {
         this.drawCircle(x, y, radius, true);
     }
     
-    // Stroke circle
+    /*
+        * Stroke circle
+        * @param {number} x - X coordinate of the circle center
+        * @param {number} y - Y coordinate of the circle center
+        * @param {number} radius - Radius of the circle
+    */
     strokeCircle(x, y, radius) {
         this.drawCircle(x, y, radius, false);
     }
     
-    // Internal circle drawing
+    /*
+        * Internal circle drawing method
+        * Draws a circle using the current fillStyle or strokeStyle
+        * @param {number} x - X coordinate of the circle center
+        * @param {number} y - Y coordinate of the circle center
+        * @param {number} radius - Radius of the circle
+        * @param {boolean} fill - Whether to fill (true) or stroke (false) the circle
+    */
     drawCircle(x, y, radius, fill = true) {
         const gl = this.gl;
         const program = this.shaders.circle;
@@ -349,7 +456,13 @@ class WebGLCanvas {
         gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
     }
     
-    // Draw line
+    /*
+        * Draw a line between two points
+        * @param {number} x1 - X coordinate of the first point
+        * @param {number} y1 - Y coordinate of the first point
+        * @param {number} x2 - X coordinate of the second point
+        * @param {number} y2 - Y coordinate of the second point
+    */
     drawLine(x1, y1, x2, y2) {
         const gl = this.gl;
         const program = this.shaders.basic;
@@ -378,7 +491,12 @@ class WebGLCanvas {
         gl.drawArrays(gl.LINES, 0, 2);
     }
     
-    // Transform methods
+    /*
+        * Translate the canvas
+        * Applies a translation transformation to the current state
+        * @param {number} x - X translation
+        * @param {number} y - Y translation
+    */
     translate(x, y) {
         const translateMatrix = [
             1, 0, x,
@@ -388,6 +506,12 @@ class WebGLCanvas {
         this.state.transform = this.multiplyMatrix(this.state.transform, translateMatrix);
     }
     
+    /*
+        * Rotate the canvas
+        * Applies a rotation transformation to the current state
+        * @param {number}  
+        * angle - Rotation angle in radians
+    */
     rotate(angle) {
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
@@ -399,6 +523,12 @@ class WebGLCanvas {
         this.state.transform = this.multiplyMatrix(this.state.transform, rotateMatrix);
     }
     
+    /*
+        * Scale the canvas
+        * Applies a scaling transformation to the current state
+        * @param {number} x - X scale factor
+        * @param {number} y - Y scale factor (optional, defaults to x)
+    */
     scale(x, y = x) {
         const scaleMatrix = [
             x, 0, 0,
@@ -408,11 +538,23 @@ class WebGLCanvas {
         this.state.transform = this.multiplyMatrix(this.state.transform, scaleMatrix);
     }
     
-    // Custom shader support
+    /*
+        * Add a custom shader program
+        * Allows users to define their own shaders for advanced effects
+        * @param {string} name - Name of the shader
+        * @param {string} vertexShaderSource - GLSL source code for the vertex shader
+        * @param {string} fragmentShaderSource - GLSL source code for the fragment shader
+    */  
     addShader(name, vertexShaderSource, fragmentShaderSource) {
         this.shaders[name] = this.createShaderProgram(vertexShaderSource, fragmentShaderSource);
     }
     
+    /*
+        * Use a custom shader program
+        * Sets the current shader program to the specified one
+        * @param {string} name - Name of the shader to use
+        * @return {WebGLProgram} - The shader program being used
+    */
     useShader(name) {
         if (this.shaders[name]) {
             this.gl.useProgram(this.shaders[name]);
@@ -421,7 +563,12 @@ class WebGLCanvas {
         throw new Error(`Shader "${name}" not found`);
     }
     
-    // Utility method to resize canvas
+    /*
+        * Resize the canvas
+        * Updates the canvas size and WebGL viewport
+        * @param {number} width - New width of the canvas
+        * @param {number} height - New height of the canvas
+    */
     resize(width, height) {
         this.canvas.width = width;
         this.canvas.height = height;
