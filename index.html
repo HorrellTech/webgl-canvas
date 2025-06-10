@@ -129,19 +129,30 @@
             background: linear-gradient(45deg, #667eea, #764ba2);
             border-radius: 2px;
         }
-        
-        canvas {
+          canvas {
             border: 2px solid rgba(255, 255, 255, 0.2);
             border-radius: 12px;
             display: block;
             margin: 30px auto;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
             background: #000;
-            transition: box-shadow 0.3s ease;
+            transition: box-shadow 0.3s ease, border-color 0.3s ease;
+            outline: none; /* Remove default focus outline */
+            cursor: pointer;
         }
         
         canvas:hover {
             box-shadow: 0 12px 40px rgba(102, 126, 234, 0.3);
+        }
+        
+        canvas:focus {
+            border-color: rgba(102, 126, 234, 0.8);
+            box-shadow: 0 12px 40px rgba(102, 126, 234, 0.5);
+        }
+        
+        canvas.game-active {
+            border-color: rgba(0, 255, 136, 0.8);
+            box-shadow: 0 12px 40px rgba(0, 255, 136, 0.4);
         }
         
         .controls {
@@ -400,16 +411,17 @@
     <div class="container">
         <div class="section">
             <h2>🎯 Basic Shapes Demo</h2>
-            <canvas id="basicCanvas" width="1000" height="500"></canvas>
+            <canvas id="basicCanvas" width="1000" height="500" tabindex="1"></canvas>
             <div class="controls">
                 <button onclick="drawBasicShapes()">🎨 Draw Basic Shapes</button>
                 <button onclick="clearCanvas('basic')">🗑️ Clear</button>
             </div>
-            
-            <div class="code-example">
+              <div class="code-example">
                 <span class="comment">// Basic usage example</span><br>
 <span class="highlight">const</span> canvas = document.getElementById(<span class="string">'myCanvas'</span>);<br>
-<span class="highlight">const</span> ctx = <span class="highlight">new</span> WebGLCanvas(canvas);<br><br>
+<span class="highlight">const</span> ctx = <span class="highlight">new</span> WebGLCanvas(canvas, { <br>
+&nbsp;&nbsp;enableFullscreen: <span class="highlight">true</span> <span class="comment">// Add fullscreen button</span><br>
+});<br><br>
 
 <span class="comment">// Draw like HTML5 Canvas but with WebGL power!</span><br>
 ctx.fillStyle = <span class="string">'#ff6b6b'</span>;<br>
@@ -423,13 +435,13 @@ ctx.lineWidth = 3;<br>
 ctx.drawLine(50, 200, 400, 200);
             </div>
         </div>
-        
-        <div class="section">
-            <h2>🔥 Performance Stress Test</h2>
-            <div class="performance-warning">
-                ⚠️ This test renders thousands of objects to showcase WebGL performance. May be intensive on older devices.
+          <div class="section">
+            <h2>🔥 Performance Stress Test</h2>            <div class="performance-warning">
+                ⚠️ This test renders thousands of objects to showcase WebGL performance. May be intensive on older devices.<br>
+                💡 <em>Click the canvas to focus it and use arrow keys without scrolling the page!</em><br>
+                🖥️ <em>Look for the fullscreen button in the bottom-right corner!</em>
             </div>
-            <canvas id="stressCanvas" width="1000" height="600" style="position: relative;">
+            <canvas id="stressCanvas" width="1000" height="600" style="position: relative;" tabindex="2">
                 <div class="fps-counter" id="fpsCounter">FPS: --</div>
             </canvas>
             <div class="stats-grid">
@@ -461,7 +473,7 @@ ctx.drawLine(50, 200, 400, 200);
         
         <div class="section">
             <h2>🔄 Animation & Transforms</h2>
-            <canvas id="animationCanvas" width="1000" height="500"></canvas>
+            <canvas id="animationCanvas" width="1000" height="500" tabindex="3"></canvas>
             <div class="controls">
                 <button onclick="startAnimation()">▶️ Start Animation</button>
                 <button onclick="stopAnimation()">⏸️ Stop Animation</button>
@@ -491,15 +503,17 @@ ctx.drawLine(50, 200, 400, 200);
                 <div>Lives: <span id="gameLives">3</span></div>
                 <div>Level: <span id="gameLevel">1</span></div>
             </div>
-            <canvas id="gameCanvas" width="1000" height="600"></canvas>
-            
-            <div class="game-controls">
+            <canvas id="gameCanvas" width="1000" height="600" tabindex="4"></canvas>
+              <div class="game-controls">
                 <h4>🎮 Game Controls</h4>
                 <div class="control-row">
                     <span class="key">W A S D</span> or <span class="key">Arrow Keys</span> - Move Ship
                 </div>
                 <div class="control-row">
                     <span class="key">SPACE</span> - Shoot • <span class="key">P</span> - Pause
+                </div>                <div class="control-row" style="margin-top: 15px; font-size: 0.9rem; color: rgba(255,255,255,0.7);">
+                    💡 <em>Click on any canvas to focus it and prevent page scrolling with arrow keys</em><br>
+                    🖥️ <em>Use the fullscreen button in the bottom-right corner for immersive gaming!</em>
                 </div>
             </div>
             
@@ -516,8 +530,7 @@ ctx.drawLine(50, 200, 400, 200);
         <p>Final Score: <span id="finalScore">0</span></p>
         <button onclick="resetGame()">🎮 Play Again</button>
     </div><script src="src/webgl-canvas.js"></script>
-    <script>
-        // Global variables
+    <script>        // Global variables
         let basicCtx, animationCtx, stressCtx, gameCtx;
         let animationId = null;
         let stressTestId = null;
@@ -528,7 +541,11 @@ ctx.drawLine(50, 200, 400, 200);
         let lastTime = performance.now();
         let fps = 0;
         let objectCount = 0;
-        let stressObjects = [];        // Game state
+        let stressObjects = [];
+        
+        // Focus management
+        let focusedCanvas = null;
+        let gameKeysEnabled = false;// Game state
         let gameRunning = false;
         let gamePaused = false;
         let gameScore = 0;
@@ -551,18 +568,16 @@ ctx.drawLine(50, 200, 400, 200);
         let bullets = [];
         let asteroids = [];
         let particles = [];
-        
-        // Wait for DOM to be ready
+          // Wait for DOM to be ready
         document.addEventListener('DOMContentLoaded', function() {
             initializeCanvases();
+            setupCanvasFocus();
             setupGameInput();
             
             // Initial demos
             drawBasicShapes();
             updateGameUI();
-        });
-        
-        function initializeCanvases() {
+        });        function initializeCanvases() {
             // Initialize canvases
             const basicCanvas = document.getElementById('basicCanvas');
             const animationCanvas = document.getElementById('animationCanvas');
@@ -571,8 +586,42 @@ ctx.drawLine(50, 200, 400, 200);
             
             basicCtx = new WebGLCanvas(basicCanvas);
             animationCtx = new WebGLCanvas(animationCanvas);
-            stressCtx = new WebGLCanvas(stressCanvas);
-            gameCtx = new WebGLCanvas(gameCanvas);
+            stressCtx = new WebGLCanvas(stressCanvas, { enableFullscreen: true });
+            gameCtx = new WebGLCanvas(gameCanvas, { enableFullscreen: true });
+        }
+        
+        // Canvas focus management
+        function setupCanvasFocus() {
+            const canvases = document.querySelectorAll('canvas');
+            
+            canvases.forEach(canvas => {
+                // Add focus and blur event listeners
+                canvas.addEventListener('focus', () => {
+                    focusedCanvas = canvas.id;
+                    gameKeysEnabled = (canvas.id === 'gameCanvas');
+                    
+                    // Add visual indication for game canvas
+                    if (canvas.id === 'gameCanvas' && gameRunning) {
+                        canvas.classList.add('game-active');
+                    }
+                });
+                
+                canvas.addEventListener('blur', () => {
+                    focusedCanvas = null;
+                    gameKeysEnabled = false;
+                    canvas.classList.remove('game-active');
+                });
+                
+                // Click to focus
+                canvas.addEventListener('click', () => {
+                    canvas.focus();
+                });
+                
+                // Prevent context menu on right click
+                canvas.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                });
+            });
         }
         
         // Basic shapes demo
@@ -770,24 +819,46 @@ ctx.drawLine(50, 200, 400, 200);
         function removeObjects() {
             stressObjects.splice(0, Math.min(500, stressObjects.length));
         }
-        
-        // Game functions
+          // Game functions
         function setupGameInput() {
             document.addEventListener('keydown', (e) => {
+                // Always track keys for game functionality
                 keys[e.code] = true;
                 
-                if (e.code === 'Space') {
+                // Prevent default behavior for game keys when any canvas is focused
+                if (focusedCanvas && (
+                    e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD' ||
+                    e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' ||
+                    e.code === 'Space'
+                )) {
                     e.preventDefault();
-                    shoot();
                 }
                 
-                if (e.code === 'KeyP') {
-                    pauseGame();
+                // Game-specific actions (only when game canvas is focused or game is running)
+                if (gameKeysEnabled || gameRunning) {
+                    if (e.code === 'Space') {
+                        e.preventDefault();
+                        shoot();
+                    }
+                    
+                    if (e.code === 'KeyP') {
+                        e.preventDefault();
+                        pauseGame();
+                    }
                 }
             });
             
             document.addEventListener('keyup', (e) => {
                 keys[e.code] = false;
+                
+                // Prevent default behavior for game keys when any canvas is focused
+                if (focusedCanvas && (
+                    e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD' ||
+                    e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' ||
+                    e.code === 'Space'
+                )) {
+                    e.preventDefault();
+                }
             });
         }
         

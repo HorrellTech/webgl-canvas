@@ -2,11 +2,14 @@
  * WebGLCanvas - A WebGL-powered canvas with HTML5 Canvas-like API
  * Easy to use, GPU-accelerated 2D graphics library
  */
-class WebGLCanvas {
-    constructor(canvas, options = {}) {
+class WebGLCanvas {    constructor(canvas, options = {}) {
         this.canvas = canvas;
         this.width = canvas.width;
         this.height = canvas.height;
+        this.options = {
+            enableFullscreen: options.enableFullscreen || false,
+            ...options
+        };
         
         // WebGL context
         this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -22,6 +25,11 @@ class WebGLCanvas {
             transform: this.createIdentityMatrix()
         };
         this.stateStack = [];
+          // Fullscreen state
+        this.isFullscreen = false;
+        this.originalStyle = {};
+        this.originalDimensions = {};
+        this.fullscreenButton = null;
         
         // Initialize WebGL
         this.init();
@@ -38,6 +46,11 @@ class WebGLCanvas {
         this.gl.viewport(0, 0, this.width, this.height);
         this.gl.enable(this.gl.BLEND);
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+        
+        // Setup fullscreen if enabled
+        if (this.options.enableFullscreen) {
+            this.setupFullscreen();
+        }
     }
     
     /*
@@ -741,9 +754,301 @@ class WebGLCanvas {
         
         const textureLoc = gl.getUniformLocation(program, 'u_texture');
         gl.uniform1i(textureLoc, 0);
-        
-        // Draw
+          // Draw
         gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+    }
+    
+    // Fullscreen functionality
+    setupFullscreen() {
+        // Create fullscreen button
+        this.createFullscreenButton();
+        
+        // Listen for fullscreen changes
+        document.addEventListener('fullscreenchange', () => this.handleFullscreenChange());
+        document.addEventListener('webkitfullscreenchange', () => this.handleFullscreenChange());
+        document.addEventListener('mozfullscreenchange', () => this.handleFullscreenChange());
+        document.addEventListener('MSFullscreenChange', () => this.handleFullscreenChange());        // Listen for escape key when canvas is focused
+        this.canvas.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.isFullscreen) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.exitFullscreen();
+            }
+        });
+        
+        // Global escape key handler to prevent double-escape issue
+        this.globalEscapeHandler = (e) => {
+            if (e.key === 'Escape' && this.isFullscreen) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.exitFullscreen();
+            }
+        };
+        document.addEventListener('keydown', this.globalEscapeHandler, true);
+    }    createFullscreenButton() {
+        // Create a wrapper around the canvas if it doesn't exist
+        let wrapper = this.canvas.parentElement;
+        const needsWrapper = !wrapper || !wrapper.classList.contains('webgl-canvas-wrapper');
+        
+        if (needsWrapper) {
+            wrapper = document.createElement('div');
+            wrapper.className = 'webgl-canvas-wrapper';            wrapper.style.cssText = `
+                position: relative;
+                display: inline-block;
+                width: ${this.canvas.offsetWidth || this.canvas.width}px;
+                height: ${this.canvas.offsetHeight || this.canvas.height}px;
+                margin: 0;
+                padding: 0;
+            `;
+            
+            // Insert wrapper and move canvas into it
+            this.canvas.parentNode.insertBefore(wrapper, this.canvas);
+            wrapper.appendChild(this.canvas);
+        }
+        
+        // Create the button
+        this.fullscreenButton = document.createElement('button');
+        this.fullscreenButton.className = 'webgl-fullscreen-btn';        this.fullscreenButton.style.cssText = `
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 6px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            opacity: 0.7;
+            margin: 0;
+            box-sizing: border-box;
+            line-height: 1;
+        `;
+        
+        this.fullscreenButton.innerHTML = '⛶'; // Fullscreen icon
+        this.fullscreenButton.title = 'Toggle Fullscreen (F11 or click)';
+        
+        // Button hover effects
+        this.fullscreenButton.addEventListener('mouseenter', () => {
+            this.fullscreenButton.style.background = 'rgba(102, 126, 234, 0.8)';
+            this.fullscreenButton.style.transform = 'scale(1.1)';
+            this.fullscreenButton.style.opacity = '1';
+        });
+        
+        this.fullscreenButton.addEventListener('mouseleave', () => {
+            this.fullscreenButton.style.background = 'rgba(0, 0, 0, 0.5)';
+            this.fullscreenButton.style.transform = 'scale(1)';
+            this.fullscreenButton.style.opacity = '0.7';
+        });
+        
+        // Button click handler
+        this.fullscreenButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleFullscreen();
+        });
+        
+        // Add button to wrapper
+        wrapper.appendChild(this.fullscreenButton);
+        
+        // Store references
+        this.wrapper = wrapper;
+    }
+      toggleFullscreen() {
+        if (this.isFullscreen) {
+            this.exitFullscreen();
+        } else {
+            this.enterFullscreen();
+        }
+    }enterFullscreen() {
+        // Store original styles and dimensions
+        this.originalStyle = {
+            width: this.canvas.style.width,
+            height: this.canvas.style.height,
+            position: this.canvas.style.position,
+            top: this.canvas.style.top,
+            left: this.canvas.style.left,
+            zIndex: this.canvas.style.zIndex,
+            margin: this.canvas.style.margin,
+            transform: this.canvas.style.transform
+        };
+        
+        // Store original canvas dimensions
+        this.originalDimensions = {
+            width: this.canvas.width,
+            height: this.canvas.height,
+            cssWidth: this.canvas.style.width,
+            cssHeight: this.canvas.style.height
+        };
+        
+        // Apply fullscreen styles
+        this.canvas.style.cssText += `
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 9999 !important;
+            margin: 0 !important;
+            border-radius: 0 !important;
+        `;
+        
+        // Update canvas dimensions
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+        this.width = window.innerWidth;
+        this.height = window.innerHeight;
+        
+        // Update WebGL viewport
+        this.gl.viewport(0, 0, this.width, this.height);
+          // Update button position for fullscreen
+        if (this.fullscreenButton) {
+            this.fullscreenButton.style.position = 'fixed';
+            this.fullscreenButton.style.bottom = '5px';
+            this.fullscreenButton.style.right = '5px';
+            this.fullscreenButton.style.zIndex = '10000';
+        }
+        
+        // Update button icon
+        this.fullscreenButton.innerHTML = '⛷'; // Exit fullscreen icon
+        this.fullscreenButton.title = 'Exit Fullscreen (Esc or click)';
+        
+        this.isFullscreen = true;
+        
+        // Try to enter browser fullscreen if supported
+        if (this.canvas.requestFullscreen) {
+            this.canvas.requestFullscreen().catch(() => {
+                // Fullscreen failed, but we still have our custom fullscreen
+            });
+        } else if (this.canvas.webkitRequestFullscreen) {
+            this.canvas.webkitRequestFullscreen();
+        } else if (this.canvas.mozRequestFullScreen) {
+            this.canvas.mozRequestFullScreen();
+        } else if (this.canvas.msRequestFullscreen) {
+            this.canvas.msRequestFullscreen();
+        }
+        
+        // Focus the canvas
+        this.canvas.focus();
+        
+        // Dispatch custom event
+        this.canvas.dispatchEvent(new CustomEvent('enterFullscreen'));
+    }
+      exitFullscreen() {
+        // Restore original styles
+        Object.keys(this.originalStyle).forEach(key => {
+            this.canvas.style[key] = this.originalStyle[key] || '';
+        });
+        
+        // Restore original dimensions from stored values
+        this.canvas.width = this.originalDimensions.width;
+        this.canvas.height = this.originalDimensions.height;
+        this.width = this.originalDimensions.width;
+        this.height = this.originalDimensions.height;
+          // Restore CSS size if it was set
+        if (this.originalDimensions.cssWidth) {
+            this.canvas.style.width = this.originalDimensions.cssWidth;
+        } else {
+            this.canvas.style.width = '';
+        }
+        if (this.originalDimensions.cssHeight) {
+            this.canvas.style.height = this.originalDimensions.cssHeight;
+        } else {
+            this.canvas.style.height = '';
+        }
+        
+        // Update wrapper size if we have a wrapper
+        if (this.wrapper && this.wrapper.classList.contains('webgl-canvas-wrapper')) {
+            this.wrapper.style.width = `${this.canvas.offsetWidth || this.canvas.width}px`;
+            this.wrapper.style.height = `${this.canvas.offsetHeight || this.canvas.height}px`;
+        }
+        
+        // Update WebGL viewport
+        this.gl.viewport(0, 0, this.width, this.height);
+          // Restore button position
+        if (this.fullscreenButton) {
+            this.fullscreenButton.style.position = 'absolute';
+            this.fullscreenButton.style.bottom = '5px';
+            this.fullscreenButton.style.right = '5px';
+            this.fullscreenButton.style.zIndex = '1000';
+        }
+        
+        // Update button icon
+        this.fullscreenButton.innerHTML = '⛶'; // Fullscreen icon
+        this.fullscreenButton.title = 'Toggle Fullscreen (F11 or click)';
+        
+        this.isFullscreen = false;
+        
+        // Exit browser fullscreen
+        if (document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        } else if (document.mozCancelFullScreen) {
+            document.mozCancelFullScreen();
+        } else if (document.msExitFullscreen) {
+            document.msExitFullscreen();
+        }
+        
+        // Dispatch custom event
+        this.canvas.dispatchEvent(new CustomEvent('exitFullscreen'));
+    }
+      handleFullscreenChange() {
+        // Check if we're still in browser fullscreen
+        const isInBrowserFullscreen = !!(
+            document.fullscreenElement ||
+            document.webkitFullscreenElement ||
+            document.mozFullScreenElement ||
+            document.msFullscreenElement
+        );
+        
+        // If browser fullscreen was exited but we're still in custom fullscreen
+        if (!isInBrowserFullscreen && this.isFullscreen) {
+            // Exit our custom fullscreen to stay in sync
+            this.exitFullscreen();
+        }
+    }
+    
+    /**
+     * Clean up resources and remove fullscreen elements
+     * Call this when you're done with the canvas
+     */    cleanup() {
+        // Remove global escape handler
+        if (this.globalEscapeHandler) {
+            document.removeEventListener('keydown', this.globalEscapeHandler, true);
+        }
+        
+        // Remove fullscreen button
+        if (this.fullscreenButton && this.fullscreenButton.parentNode) {
+            this.fullscreenButton.parentNode.removeChild(this.fullscreenButton);
+        }
+        
+        // If we created a wrapper, restore original structure
+        if (this.wrapper && this.wrapper.classList.contains('webgl-canvas-wrapper')) {
+            const parent = this.wrapper.parentNode;
+            if (parent) {
+                parent.insertBefore(this.canvas, this.wrapper);
+                parent.removeChild(this.wrapper);
+            }
+        }
+        
+        // Clean up WebGL resources
+        if (this.gl) {
+            if (this.vertexBuffer) this.gl.deleteBuffer(this.vertexBuffer);
+            if (this.indexBuffer) this.gl.deleteBuffer(this.indexBuffer);
+            
+            // Clean up shaders
+            Object.values(this.shaders).forEach(shader => {
+                if (shader.program) this.gl.deleteProgram(shader.program);
+            });
+        }
     }
 }
 

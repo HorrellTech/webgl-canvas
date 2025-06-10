@@ -27,7 +27,9 @@ A powerful, easy-to-use WebGL-powered 2D graphics library with an HTML5 Canvas-l
     <script src="src/webgl-canvas.js"></script>
     <script>
         const canvas = document.getElementById('myCanvas');
-        const ctx = new WebGLCanvas(canvas);
+        const ctx = new WebGLCanvas(canvas, {
+            enableFullscreen: true  // Add fullscreen button
+        });
         
         // Draw like HTML5 Canvas but with WebGL power!
         ctx.fillStyle = '#ff6b6b';
@@ -42,6 +44,31 @@ A powerful, easy-to-use WebGL-powered 2D graphics library with an HTML5 Canvas-l
     </script>
 </body>
 </html>
+```
+
+### Fullscreen Feature
+
+Enable fullscreen mode for immersive experiences:
+
+```javascript
+const canvas = document.getElementById('myCanvas');
+const ctx = new WebGLCanvas(canvas, {
+    enableFullscreen: true  // Shows fullscreen button
+});
+
+// Listen for fullscreen events
+canvas.addEventListener('enterFullscreen', () => {
+    console.log('Entered fullscreen mode');
+});
+
+canvas.addEventListener('exitFullscreen', () => {
+    console.log('Exited fullscreen mode');
+});
+
+// Programmatic fullscreen control
+ctx.toggleFullscreen();  // Toggle fullscreen
+ctx.enterFullscreen();   // Enter fullscreen
+ctx.exitFullscreen();    // Exit fullscreen
 ```
 
 ### Animation Example

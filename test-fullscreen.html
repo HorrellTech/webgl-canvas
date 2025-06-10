@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Canvas Fullscreen Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            padding: 20px;
+            margin: 0;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #4CAF50;
+        }
+        
+        .canvas-container {
+            display: flex;
+            justify-content: center;
+            margin: 40px 0;
+        }
+        
+        canvas {
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
+        
+        .info {
+            background: #333;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .info h3 {
+            color: #4CAF50;
+            margin-top: 0;
+        }
+        
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 WebGL Canvas Fullscreen Test</h1>
+        
+        <div class="info">
+            <h3>Fullscreen Test Instructions:</h3>
+            <ul>
+                <li><strong>Button Position:</strong> The fullscreen button should be in the exact bottom-right corner</li>
+                <li><strong>Single Escape:</strong> Press ESC once to exit fullscreen (not twice)</li>
+                <li><strong>Button Visibility:</strong> The fullscreen button should be visible both in normal and fullscreen mode</li>
+                <li><strong>Canvas Restoration:</strong> Canvas should return to original size when exiting fullscreen</li>
+            </ul>
+        </div>
+        
+        <div class="canvas-container">
+            <canvas id="testCanvas" width="600" height="400"></canvas>
+        </div>
+        
+        <div class="test-buttons">
+            <button onclick="testCanvas.toggleFullscreen()">Toggle Fullscreen</button>
+            <button onclick="testCanvas.enterFullscreen()">Enter Fullscreen</button>
+            <button onclick="testCanvas.exitFullscreen()">Exit Fullscreen</button>
+            <button onclick="drawTestPattern()">Redraw Pattern</button>
+        </div>
+    </div>
+
+    <script src="src/webgl-canvas.js"></script>
+    <script>
+        const canvas = document.getElementById('testCanvas');
+        const testCanvas = new WebGLCanvas(canvas, {
+            enableFullscreen: true
+        });
+        
+        // Draw a test pattern
+        function drawTestPattern() {
+            testCanvas.clear();
+            
+            // Draw background gradient using rectangles
+            for (let i = 0; i < 20; i++) {
+                const alpha = (20 - i) / 20;
+                testCanvas.fillStyle = `rgba(76, 175, 80, ${alpha * 0.3})`;
+                testCanvas.fillRect(i * 30, i * 20, canvas.width - i * 60, canvas.height - i * 40);
+            }
+            
+            // Draw some test shapes
+            testCanvas.fillStyle = '#ff6b6b';
+            testCanvas.fillRect(50, 50, 100, 80);
+            
+            testCanvas.fillStyle = '#4ecdc4';
+            testCanvas.fillCircle(canvas.width - 100, 100, 50);
+            
+            testCanvas.fillStyle = '#45b7d1';
+            testCanvas.fillCircle(100, canvas.height - 100, 40);
+            
+            testCanvas.strokeStyle = '#ffffff';
+            testCanvas.lineWidth = 3;
+            testCanvas.drawLine(0, 0, canvas.width, canvas.height);
+            testCanvas.drawLine(canvas.width, 0, 0, canvas.height);
+            
+            // Draw corner markers to test positioning
+            testCanvas.fillStyle = '#ffeb3b';
+            testCanvas.fillRect(0, 0, 20, 20); // Top-left
+            testCanvas.fillRect(canvas.width - 20, 0, 20, 20); // Top-right
+            testCanvas.fillRect(0, canvas.height - 20, 20, 20); // Bottom-left
+            testCanvas.fillRect(canvas.width - 20, canvas.height - 20, 20, 20); // Bottom-right
+        }
+        
+        // Initial draw
+        drawTestPattern();
+        
+        // Listen for fullscreen events
+        canvas.addEventListener('enterFullscreen', () => {
+            console.log('✅ Entered fullscreen mode');
+            drawTestPattern(); // Redraw for new dimensions
+        });
+        
+        canvas.addEventListener('exitFullscreen', () => {
+            console.log('✅ Exited fullscreen mode');
+            drawTestPattern(); // Redraw for original dimensions
+        });
+        
+        // Make testCanvas global for button access
+        window.testCanvas = testCanvas;
+        window.drawTestPattern = drawTestPattern;
+    </script>
+</body>
+</html>
