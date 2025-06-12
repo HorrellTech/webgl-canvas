@@ -1,8 +1,9 @@
 /**
  * WebGLCanvas - A WebGL-powered canvas with HTML5 Canvas-like API
- * Easy to use, GPU-accelerated 2D graphics library
+ * Easy to use, GPU-accelerated 2D graphics library with optimized batching
  */
-class WebGLCanvas {    constructor(canvas, options = {}) {
+class WebGLCanvas {
+    constructor(canvas, options = {}) {
         this.canvas = canvas;
         
         // Handle pixel scaling options
@@ -11,6 +12,7 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             pixelWidth: options.pixelWidth || canvas.width,
             pixelHeight: options.pixelHeight || canvas.height,
             pixelScale: options.pixelScale || 1,
+            batchSize: options.batchSize || 1000, // Max objects per batch
             ...options
         };
         
@@ -34,11 +36,20 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             transform: this.createIdentityMatrix()
         };
         this.stateStack = [];
-          // Fullscreen state
+        
+        // Fullscreen state
         this.isFullscreen = false;
         this.originalStyle = {};
         this.originalDimensions = {};
         this.fullscreenButton = null;
+        
+        // Batching system
+        this.batches = {
+            rectangles: [],
+            circles: [],
+            lines: []
+        };
+        this.batchBuffers = {};
         
         // Initialize WebGL
         this.init();
@@ -47,9 +58,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         this.shaders = {};
         this.createBuiltInShaders();
         
-        // Vertex buffer for shapes
-        this.vertexBuffer = this.gl.createBuffer();
-        this.indexBuffer = this.gl.createBuffer();
+        // Create batch buffers
+        this.createBatchBuffers();
         
         // Set initial viewport
         this.gl.viewport(0, 0, this.width, this.height);
@@ -58,7 +68,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         
         // Setup fullscreen if enabled
         if (this.options.enableFullscreen) {
-            this.setupFullscreen();        }
+            this.setupFullscreen();
+        }
     }
     
     /*
@@ -85,6 +96,50 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         // Store display dimensions
         this.displayWidth = displayWidth;
         this.displayHeight = displayHeight;
+    }
+    
+    /*
+     * Create optimized batch buffers for different shape types
+     */
+    createBatchBuffers() {
+        const gl = this.gl;
+        const batchSize = this.options.batchSize;
+        
+        // Rectangle batch buffer (4 vertices per rectangle)
+        this.batchBuffers.rectangles = {
+            vertices: gl.createBuffer(),
+            colors: gl.createBuffer(),
+            indices: gl.createBuffer(),
+            maxVertices: batchSize * 4,
+            maxIndices: batchSize * 6,
+            currentVertices: 0,
+            currentIndices: 0,
+            vertexData: new Float32Array(batchSize * 4 * 2), // x, y for each vertex
+            colorData: new Float32Array(batchSize * 4 * 4),  // r, g, b, a for each vertex
+            indexData: new Uint16Array(batchSize * 6)        // 6 indices per rectangle
+        };
+        
+        // Circle batch buffer (using instanced rendering)
+        this.batchBuffers.circles = {
+            vertices: gl.createBuffer(),
+            instanceBuffer: gl.createBuffer(),  // Changed from instanceData to instanceBuffer
+            indices: gl.createBuffer(),
+            maxInstances: batchSize,
+            currentInstances: 0,
+            instanceData: new Float32Array(batchSize * 8), // Keep this as instanceData
+            quadVertices: new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+            quadIndices: new Uint16Array([0, 1, 2, 1, 2, 3])
+        };
+        
+        // Line batch buffer
+        this.batchBuffers.lines = {
+            vertices: gl.createBuffer(),
+            colors: gl.createBuffer(),
+            maxVertices: batchSize * 2,
+            currentVertices: 0,
+            vertexData: new Float32Array(batchSize * 2 * 2), // x, y for each vertex
+            colorData: new Float32Array(batchSize * 2 * 4)   // r, g, b, a for each vertex
+        };
     }
     
     /*
@@ -126,6 +181,17 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             }
         }
         return result;
+    }
+    
+    /*
+     * Transform a point using the current transformation matrix
+     */
+    transformPoint(x, y) {
+        const m = this.state.transform;
+        return [
+            m[0] * x + m[3] * y + m[6],
+            m[1] * x + m[4] * y + m[7]
+        ];
     }
     
     /*
@@ -172,113 +238,250 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         
         return shader;
     }
+    
     /*
-        * Create built-in shaders for common effects
-        * These shaders can be used for basic shapes and effects
-        * Includes basic vertex shader and fragment shaders for solid colors and circles
+        * Create built-in shaders for batched rendering
+        * Optimized shaders that can handle multiple objects in single draw calls
     */
-    createBuiltInShaders() {        // Basic vertex shader
-        const basicVertexShader = `
+    createBuiltInShaders() {
+        // Batched rectangle vertex shader
+        const batchedRectVertexShader = `
             precision mediump float;
             attribute vec2 a_position;
-            uniform mat3 u_transform;
+            attribute vec4 a_color;
             uniform vec2 u_resolution;
+            varying vec4 v_color;
             
             void main() {
-                // Apply transform matrix
-                vec3 transformed = u_transform * vec3(a_position, 1.0);
-                
                 // Convert to normalized device coordinates (-1 to 1)
-                vec2 normalized = (transformed.xy / u_resolution) * 2.0 - 1.0;
+                vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+                normalized.y = -normalized.y; // Flip Y coordinate
                 
-                // Flip Y coordinate to match Canvas coordinate system
+                gl_Position = vec4(normalized, 0, 1);
+                v_color = a_color;
+            }
+        `;
+        
+        // Batched fragment shader
+        const batchedFragmentShader = `
+            precision mediump float;
+            varying vec4 v_color;
+            
+            void main() {
+                gl_FragColor = v_color;
+            }
+        `;
+        
+        // Instanced circle vertex shader
+        const instancedCircleVertexShader = `
+            precision mediump float;
+            attribute vec2 a_position; // Quad vertex (-1 to 1)
+            attribute vec4 a_instanceData1; // x, y, radius, rotation
+            attribute vec4 a_instanceData2; // r, g, b, a
+            uniform vec2 u_resolution;
+            varying vec4 v_color;
+            varying vec2 v_center;
+            varying float v_radius;
+            varying vec2 v_coord;
+            
+            void main() {
+                vec2 center = a_instanceData1.xy;
+                float radius = a_instanceData1.z;
+                
+                // Scale quad to circle size and position
+                vec2 position = center + a_position * radius;
+                
+                // Convert to normalized device coordinates
+                vec2 normalized = (position / u_resolution) * 2.0 - 1.0;
                 normalized.y = -normalized.y;
                 
                 gl_Position = vec4(normalized, 0, 1);
+                v_color = a_instanceData2;
+                v_center = center;
+                v_radius = radius;
+                v_coord = position;
             }
         `;
         
-        // Basic fragment shader for solid colors
-        const basicFragmentShader = `
-            precision mediump float;
-            uniform vec4 u_color;
-            
-            void main() {
-                gl_FragColor = u_color;
-            }
-        `;
-        
-        // Circle fragment shader
+        // Circle fragment shader with perfect circles
         const circleFragmentShader = `
             precision mediump float;
-            uniform vec4 u_color;
-            uniform vec2 u_center;
-            uniform float u_radius;
-            uniform vec2 u_resolution;
+            varying vec4 v_color;
+            varying vec2 v_center;
+            varying float v_radius;
+            varying vec2 v_coord;
             
             void main() {
-                vec2 coord = gl_FragCoord.xy;
-                coord.y = u_resolution.y - coord.y; // Flip Y coordinate
-                float dist = distance(coord, u_center);
-                if (dist > u_radius) {
+                float dist = distance(v_coord, v_center);
+                if (dist > v_radius) {
                     discard;
                 }
-                gl_FragColor = u_color;
-            }
-        `;
-          // Texture vertex shader
-        const textureVertexShader = `
-            precision mediump float;
-            attribute vec2 a_position;
-            attribute vec2 a_texCoord;
-            uniform mat3 u_transform;
-            uniform vec2 u_resolution;
-            varying vec2 v_texCoord;
-            
-            void main() {
-                // Apply transform matrix
-                vec3 transformed = u_transform * vec3(a_position, 1.0);
-                
-                // Convert to normalized device coordinates (-1 to 1)
-                vec2 normalized = (transformed.xy / u_resolution) * 2.0 - 1.0;
-                
-                // Flip Y coordinate to match Canvas coordinate system
-                normalized.y = -normalized.y;
-                
-                gl_Position = vec4(normalized, 0, 1);
-                v_texCoord = a_texCoord;
+                gl_FragColor = v_color;
             }
         `;
         
-        // Texture fragment shader
-        const textureFragmentShader = `
-            precision mediump float;
-            uniform sampler2D u_texture;
-            uniform vec4 u_tint;
-            varying vec2 v_texCoord;
-            
-            void main() {
-                vec4 texColor = texture2D(u_texture, v_texCoord);
-                gl_FragColor = texColor * u_tint;
-            }
-        `;
+        // Line shader (same as batched rect but for lines)
+        const lineVertexShader = batchedRectVertexShader;
+        const lineFragmentShader = batchedFragmentShader;
         
-        this.shaders.basic = this.createShaderProgram(basicVertexShader, basicFragmentShader);
-        this.shaders.circle = this.createShaderProgram(basicVertexShader, circleFragmentShader);
-        this.shaders.texture = this.createShaderProgram(textureVertexShader, textureFragmentShader);
-        
-        // Create texture coordinate buffer
-        this.texCoordBuffer = this.gl.createBuffer();
+        this.shaders.batchedRect = this.createShaderProgram(batchedRectVertexShader, batchedFragmentShader);
+        this.shaders.instancedCircle = this.createShaderProgram(instancedCircleVertexShader, circleFragmentShader);
+        this.shaders.batchedLine = this.createShaderProgram(lineVertexShader, lineFragmentShader);
     }
     
     // Canvas-like API methods
     
     /*
-        * Clear the canvas
+        * Clear the canvas and reset batches
         * Sets the clear color to transparent and clears the color buffer
     */ 
     clear() {
         this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        
+        // Reset all batches
+        this.batchBuffers.rectangles.currentVertices = 0;
+        this.batchBuffers.rectangles.currentIndices = 0;
+        this.batchBuffers.circles.currentInstances = 0;
+        this.batchBuffers.lines.currentVertices = 0;
+    }
+    
+    /*
+     * Flush all batches to GPU
+     * This is where the magic happens - renders all batched objects efficiently
+     */
+    flush() {
+        this.flushRectangles();
+        this.flushCircles();
+        this.flushLines();
+    }
+    
+    /*
+     * Flush rectangle batch
+     */
+    flushRectangles() {
+        const batch = this.batchBuffers.rectangles;
+        if (batch.currentVertices === 0) return;
+        
+        const gl = this.gl;
+        const program = this.shaders.batchedRect;
+        
+        gl.useProgram(program);
+        
+        // Upload vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+        
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        
+        // Upload color data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.colors);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.colorData.subarray(0, batch.currentVertices * 4), gl.DYNAMIC_DRAW);
+        
+        const colorLoc = gl.getAttribLocation(program, 'a_color');
+        gl.enableVertexAttribArray(colorLoc);
+        gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 0, 0);
+        
+        // Upload index data
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.indexData.subarray(0, batch.currentIndices), gl.DYNAMIC_DRAW);
+        
+        // Set uniforms
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        gl.uniform2f(resolutionLoc, this.width, this.height);
+        
+        // Draw all rectangles in one call!
+        gl.drawElements(gl.TRIANGLES, batch.currentIndices, gl.UNSIGNED_SHORT, 0);
+    }
+    
+    /*
+     * Flush circle batch using instanced rendering
+     */
+    flushCircles() {
+        const batch = this.batchBuffers.circles;
+        if (batch.currentInstances === 0) return;
+        
+        const gl = this.gl;
+        const program = this.shaders.instancedCircle;
+        
+        gl.useProgram(program);
+        
+        // Set up quad vertices (shared by all instances)
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.quadVertices, gl.STATIC_DRAW);
+        
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        
+        // Set up instance data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.instanceBuffer);  // Changed from instanceData to instanceBuffer
+        gl.bufferData(gl.ARRAY_BUFFER, batch.instanceData.subarray(0, batch.currentInstances * 8), gl.DYNAMIC_DRAW);
+        
+        // Instance data 1: x, y, radius, rotation
+        const instanceLoc1 = gl.getAttribLocation(program, 'a_instanceData1');
+        gl.enableVertexAttribArray(instanceLoc1);
+        gl.vertexAttribPointer(instanceLoc1, 4, gl.FLOAT, false, 32, 0);
+        
+        // Instance data 2: r, g, b, a
+        const instanceLoc2 = gl.getAttribLocation(program, 'a_instanceData2');
+        gl.enableVertexAttribArray(instanceLoc2);
+        gl.vertexAttribPointer(instanceLoc2, 4, gl.FLOAT, false, 32, 16);
+        
+        // Set up indices
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.quadIndices, gl.STATIC_DRAW);
+        
+        // Set uniforms
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        gl.uniform2f(resolutionLoc, this.width, this.height);
+        
+        // Draw all circles using instancing (if supported) or loop
+        if (gl.drawElementsInstanced) {
+            gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, batch.currentInstances);
+        } else {
+            // Fallback: draw each circle individually (still faster than original method)
+            for (let i = 0; i < batch.currentInstances; i++) {
+                gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+            }
+        }
+    }
+    
+    /*
+     * Flush line batch
+     */
+    flushLines() {
+        const batch = this.batchBuffers.lines;
+        if (batch.currentVertices === 0) return;
+        
+        const gl = this.gl;
+        const program = this.shaders.batchedLine;
+        
+        gl.useProgram(program);
+        
+        // Upload vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+        
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        
+        // Upload color data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.colors);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.colorData.subarray(0, batch.currentVertices * 4), gl.DYNAMIC_DRAW);
+        
+        const colorLoc = gl.getAttribLocation(program, 'a_color');
+        gl.enableVertexAttribArray(colorLoc);
+        gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 0, 0);
+        
+        // Set uniforms
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        gl.uniform2f(resolutionLoc, this.width, this.height);
+        
+        // Draw all lines
+        gl.drawArrays(gl.LINES, 0, batch.currentVertices);
     }
     
     /*
@@ -343,24 +546,61 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
     parseColor(color) {
         if (Array.isArray(color)) return color;
         
-        if (color.startsWith('#')) {
-            // Hex color
-            const hex = color.substring(1);
-            const r = parseInt(hex.substring(0, 2), 16) / 255;
-            const g = parseInt(hex.substring(2, 4), 16) / 255;
-            const b = parseInt(hex.substring(4, 6), 16) / 255;
-            return [r, g, b, 1];
-        }
-        
-        if (color.startsWith('rgb')) {
-            // RGB/RGBA color
-            const values = color.match(/[\d.]+/g);
-            if (values.length >= 3) {
-                const r = parseFloat(values[0]) / 255;
-                const g = parseFloat(values[1]) / 255;
-                const b = parseFloat(values[2]) / 255;
-                const a = values.length > 3 ? parseFloat(values[3]) : 1;
-                return [r, g, b, a];
+        if (typeof color === 'string') {
+            if (color.startsWith('#')) {
+                // Hex color
+                const hex = color.substring(1);
+                const r = parseInt(hex.substring(0, 2), 16) / 255;
+                const g = parseInt(hex.substring(2, 4), 16) / 255;
+                const b = parseInt(hex.substring(4, 6), 16) / 255;
+                return [r, g, b, 1];
+            }
+            
+            if (color.startsWith('rgb')) {
+                // RGB/RGBA color
+                const values = color.match(/[\d.]+/g);
+                if (values && values.length >= 3) {
+                    const r = parseFloat(values[0]) / 255;
+                    const g = parseFloat(values[1]) / 255;
+                    const b = parseFloat(values[2]) / 255;
+                    const a = values.length > 3 ? parseFloat(values[3]) : 1;
+                    return [r, g, b, a];
+                }
+            }
+            
+            if (color.startsWith('hsl')) {
+                // HSL color - convert to RGB
+                const values = color.match(/[\d.]+/g);
+                if (values && values.length >= 3) {
+                    const h = parseFloat(values[0]) / 360;
+                    const s = parseFloat(values[1]) / 100;
+                    const l = parseFloat(values[2]) / 100;
+                    const a = values.length > 3 ? parseFloat(values[3]) : 1;
+                    
+                    const hslToRgb = (h, s, l) => {
+                        let r, g, b;
+                        if (s === 0) {
+                            r = g = b = l;
+                        } else {
+                            const hue2rgb = (p, q, t) => {
+                                if (t < 0) t += 1;
+                                if (t > 1) t -= 1;
+                                if (t < 1/6) return p + (q - p) * 6 * t;
+                                if (t < 1/2) return q;
+                                if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                                return p;
+                            };
+                            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                            const p = 2 * l - q;
+                            r = hue2rgb(p, q, h + 1/3);
+                            g = hue2rgb(p, q, h);
+                            b = hue2rgb(p, q, h - 1/3);
+                        }
+                        return [r, g, b, a];
+                    };
+                    
+                    return hslToRgb(h, s, l);
+                }
             }
         }
         
@@ -391,198 +631,177 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         }
     }
     
-    // Drawing methods
+    // Drawing methods (now use batching)
     
     /*
-        * Fill rectangle
+        * Fill rectangle - adds to batch
         * @param {number} x - X coordinate of the rectangle
         * @param {number} y - Y coordinate of the rectangle
         * @param {number} width - Width of the rectangle    
         * @param {number} height - Height of the rectangle
     */
     fillRect(x, y, width, height) {
-        this.drawRect(x, y, width, height, true);
+        this.addRectangleToBatch(x, y, width, height, this.state.fillStyle);
     }
     
     /*
-        * Stroke rectangle
+        * Stroke rectangle - adds to batch (not implemented in this version)
         * @param {number} x - X coordinate of the rectangle
         * @param {number} y - Y coordinate of the rectangle
         * @param {number} width - Width of the rectangle    
         * @param {number} height - Height of the rectangle
     */
     strokeRect(x, y, width, height) {
-        this.drawRect(x, y, width, height, false);
+        // TODO: Implement stroke rectangle batching
+        this.addRectangleToBatch(x, y, width, height, this.state.strokeStyle);
     }
     
     /*
-        * Internal rectangle drawing method
-        * Draws a rectangle using the current fillStyle or strokeStyle
-        * @param {number} x - X coordinate of the rectangle
-        * @param {number} y - Y coordinate of the rectangle
-        * @param {number} width - Width of the rectangle
-        * @param {number} height - Height of the rectangle
-        * @param {boolean} fill - Whether to fill (true) or stroke (false) the rectangle
-    */
-    drawRect(x, y, width, height, fill = true) {
-        const gl = this.gl;
-        const program = this.shaders.basic;
+     * Add rectangle to batch
+     */
+    addRectangleToBatch(x, y, width, height, color) {
+        const batch = this.batchBuffers.rectangles;
         
-        gl.useProgram(program);
-        
-        // Create rectangle vertices
-        const vertices = new Float32Array([
-            x, y,
-            x + width, y,
-            x, y + height,
-            x + width, y + height
-        ]);
-        
-        const indices = fill ? 
-            new Uint16Array([0, 1, 2, 1, 2, 3]) : // Filled triangle pairs
-            new Uint16Array([0, 1, 1, 3, 3, 2, 2, 0]); // Outline
-        
-        // Set up buffers
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-        
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-        
-        // Set up attributes and uniforms
-        const positionLoc = gl.getAttribLocation(program, 'a_position');
-        gl.enableVertexAttribArray(positionLoc);
-        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
-        
-        const transformLoc = gl.getUniformLocation(program, 'u_transform');
-        gl.uniformMatrix3fv(transformLoc, false, this.state.transform);
-        
-        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-        gl.uniform2f(resolutionLoc, this.width, this.height);
-        
-        const colorLoc = gl.getUniformLocation(program, 'u_color');
-        const color = fill ? this.state.fillStyle : this.state.strokeStyle;
-        gl.uniform4fv(colorLoc, color);
-        
-        // Draw
-        if (fill) {
-            gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
-        } else {
-            gl.lineWidth(this.state.lineWidth);
-            gl.drawElements(gl.LINES, indices.length, gl.UNSIGNED_SHORT, 0);
+        // Check if batch is full
+        if (batch.currentVertices + 4 > batch.maxVertices) {
+            this.flushRectangles();
+            batch.currentVertices = 0;
+            batch.currentIndices = 0;
         }
+        
+        // Transform rectangle vertices
+        const [x1, y1] = this.transformPoint(x, y);
+        const [x2, y2] = this.transformPoint(x + width, y);
+        const [x3, y3] = this.transformPoint(x, y + height);
+        const [x4, y4] = this.transformPoint(x + width, y + height);
+        
+        const vertexIndex = batch.currentVertices;
+        const colorIndex = batch.currentVertices;
+        
+        // Add vertices
+        batch.vertexData[vertexIndex * 2 + 0] = x1;
+        batch.vertexData[vertexIndex * 2 + 1] = y1;
+        batch.vertexData[vertexIndex * 2 + 2] = x2;
+        batch.vertexData[vertexIndex * 2 + 3] = y2;
+        batch.vertexData[vertexIndex * 2 + 4] = x3;
+        batch.vertexData[vertexIndex * 2 + 5] = y3;
+        batch.vertexData[vertexIndex * 2 + 6] = x4;
+        batch.vertexData[vertexIndex * 2 + 7] = y4;
+        
+        // Add colors for all 4 vertices
+        for (let i = 0; i < 4; i++) {
+            batch.colorData[(colorIndex + i) * 4 + 0] = color[0];
+            batch.colorData[(colorIndex + i) * 4 + 1] = color[1];
+            batch.colorData[(colorIndex + i) * 4 + 2] = color[2];
+            batch.colorData[(colorIndex + i) * 4 + 3] = color[3];
+        }
+        
+        // Add indices (two triangles)
+        const indexBase = batch.currentVertices;
+        const indexOffset = batch.currentIndices;
+        batch.indexData[indexOffset + 0] = indexBase + 0;
+        batch.indexData[indexOffset + 1] = indexBase + 1;
+        batch.indexData[indexOffset + 2] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1;
+        batch.indexData[indexOffset + 4] = indexBase + 2;
+        batch.indexData[indexOffset + 5] = indexBase + 3;
+        
+        batch.currentVertices += 4;
+        batch.currentIndices += 6;
     }
     
     /*
-        * Fill circle
+        * Fill circle - adds to batch
         * @param {number} x - X coordinate of the circle center
         * @param {number} y - Y coordinate of the circle center
         * @param {number} radius - Radius of the circle
     */
     fillCircle(x, y, radius) {
-        this.drawCircle(x, y, radius, true);
+        this.addCircleToBatch(x, y, radius, this.state.fillStyle);
     }
     
     /*
-        * Stroke circle
+        * Stroke circle - adds to batch
         * @param {number} x - X coordinate of the circle center
         * @param {number} y - Y coordinate of the circle center
         * @param {number} radius - Radius of the circle
     */
     strokeCircle(x, y, radius) {
-        this.drawCircle(x, y, radius, false);
+        // TODO: Implement stroke circle batching
+        this.addCircleToBatch(x, y, radius, this.state.strokeStyle);
     }
     
     /*
-        * Internal circle drawing method
-        * Draws a circle using the current fillStyle or strokeStyle
-        * @param {number} x - X coordinate of the circle center
-        * @param {number} y - Y coordinate of the circle center
-        * @param {number} radius - Radius of the circle
-        * @param {boolean} fill - Whether to fill (true) or stroke (false) the circle
-    */
-    drawCircle(x, y, radius, fill = true) {
-        const gl = this.gl;
-        const program = this.shaders.circle;
+     * Add circle to batch
+     */
+    addCircleToBatch(x, y, radius, color) {
+        const batch = this.batchBuffers.circles;
         
-        gl.useProgram(program);
+        // Check if batch is full
+        if (batch.currentInstances + 1 > batch.maxInstances) {
+            this.flushCircles();
+            batch.currentInstances = 0;
+        }
         
-        // Create a quad that covers the circle
-        const vertices = new Float32Array([
-            x - radius, y - radius,
-            x + radius, y - radius,
-            x - radius, y + radius,
-            x + radius, y + radius
-        ]);
+        // Transform circle center
+        const [tx, ty] = this.transformPoint(x, y);
         
-        const indices = new Uint16Array([0, 1, 2, 1, 2, 3]);
+        const instanceIndex = batch.currentInstances;
         
-        // Set up buffers
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        // Add instance data: x, y, radius, rotation, r, g, b, a
+        batch.instanceData[instanceIndex * 8 + 0] = tx;
+        batch.instanceData[instanceIndex * 8 + 1] = ty;
+        batch.instanceData[instanceIndex * 8 + 2] = radius;
+        batch.instanceData[instanceIndex * 8 + 3] = 0; // rotation
+        batch.instanceData[instanceIndex * 8 + 4] = color[0];
+        batch.instanceData[instanceIndex * 8 + 5] = color[1];
+        batch.instanceData[instanceIndex * 8 + 6] = color[2];
+        batch.instanceData[instanceIndex * 8 + 7] = color[3];
         
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-        
-        // Set up attributes and uniforms
-        const positionLoc = gl.getAttribLocation(program, 'a_position');
-        gl.enableVertexAttribArray(positionLoc);
-        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
-        
-        const transformLoc = gl.getUniformLocation(program, 'u_transform');
-        gl.uniformMatrix3fv(transformLoc, false, this.state.transform);
-        
-        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-        gl.uniform2f(resolutionLoc, this.width, this.height);
-        
-        const centerLoc = gl.getUniformLocation(program, 'u_center');
-        gl.uniform2f(centerLoc, x, y);
-        
-        const radiusLoc = gl.getUniformLocation(program, 'u_radius');
-        gl.uniform1f(radiusLoc, radius);
-        
-        const colorLoc = gl.getUniformLocation(program, 'u_color');
-        const color = fill ? this.state.fillStyle : this.state.strokeStyle;
-        gl.uniform4fv(colorLoc, color);
-        
-        // Draw
-        gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+        batch.currentInstances++;
     }
     
     /*
-        * Draw a line between two points
+        * Draw a line between two points - adds to batch
         * @param {number} x1 - X coordinate of the first point
         * @param {number} y1 - Y coordinate of the first point
         * @param {number} x2 - X coordinate of the second point
         * @param {number} y2 - Y coordinate of the second point
     */
     drawLine(x1, y1, x2, y2) {
-        const gl = this.gl;
-        const program = this.shaders.basic;
+        const batch = this.batchBuffers.lines;
         
-        gl.useProgram(program);
+        // Check if batch is full
+        if (batch.currentVertices + 2 > batch.maxVertices) {
+            this.flushLines();
+            batch.currentVertices = 0;
+        }
         
-        const vertices = new Float32Array([x1, y1, x2, y2]);
+        // Transform line endpoints
+        const [tx1, ty1] = this.transformPoint(x1, y1);
+        const [tx2, ty2] = this.transformPoint(x2, y2);
         
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        const vertexIndex = batch.currentVertices;
+        const color = this.state.strokeStyle;
         
-        const positionLoc = gl.getAttribLocation(program, 'a_position');
-        gl.enableVertexAttribArray(positionLoc);
-        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        // Add vertices
+        batch.vertexData[vertexIndex * 2 + 0] = tx1;
+        batch.vertexData[vertexIndex * 2 + 1] = ty1;
+        batch.vertexData[vertexIndex * 2 + 2] = tx2;
+        batch.vertexData[vertexIndex * 2 + 3] = ty2;
         
-        const transformLoc = gl.getUniformLocation(program, 'u_transform');
-        gl.uniformMatrix3fv(transformLoc, false, this.state.transform);
+        // Add colors
+        for (let i = 0; i < 2; i++) {
+            batch.colorData[(vertexIndex + i) * 4 + 0] = color[0];
+            batch.colorData[(vertexIndex + i) * 4 + 1] = color[1];
+            batch.colorData[(vertexIndex + i) * 4 + 2] = color[2];
+            batch.colorData[(vertexIndex + i) * 4 + 3] = color[3];
+        }
         
-        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-        gl.uniform2f(resolutionLoc, this.width, this.height);
-        
-        const colorLoc = gl.getUniformLocation(program, 'u_color');
-        gl.uniform4fv(colorLoc, this.state.strokeStyle);
-        
-        gl.lineWidth(this.state.lineWidth);
-        gl.drawArrays(gl.LINES, 0, 2);
-    }    /*
+        batch.currentVertices += 2;
+    }
+    
+    /*
         * Translate the canvas
         * Applies a translation transformation to the current state
         * @param {number} x - X translation
@@ -600,8 +819,7 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
     /*
         * Rotate the canvas
         * Applies a rotation transformation to the current state
-        * @param {number}  
-        * angle - Rotation angle in radians
+        * @param {number} angle - Rotation angle in radians
     */
     rotate(angle) {
         const cos = Math.cos(angle);
@@ -668,131 +886,7 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         this.gl.viewport(0, 0, width, height);
     }
     
-    // Image/Texture support
-    
-    // Load and create texture from image
-    loadTexture(image) {
-        const gl = this.gl;
-        const texture = gl.createTexture();
-        
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        
-        // Set texture parameters
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        
-        return texture;
-    }
-    
-    // Load image from URL and return promise
-    loadImage(url) {
-        return new Promise((resolve, reject) => {
-            const image = new Image();
-            image.onload = () => {
-                const texture = this.loadTexture(image);
-                resolve({ image, texture, width: image.width, height: image.height });
-            };
-            image.onerror = reject;
-            image.crossOrigin = 'anonymous'; // Enable CORS
-            image.src = url;
-        });
-    }
-    
-    // Draw image/texture
-    drawImage(texture, sx = 0, sy = 0, sw = null, sh = null, dx = 0, dy = 0, dw = null, dh = null) {
-        const gl = this.gl;
-        const program = this.shaders.texture;
-        
-        gl.useProgram(program);
-        
-        // Handle different parameter combinations like Canvas drawImage
-        let sourceX = sx, sourceY = sy, sourceWidth = sw, sourceHeight = sh;
-        let destX = dx, destY = dy, destWidth = dw, destHeight = dh;
-        
-        if (arguments.length === 4) {
-            // drawImage(texture, dx, dy, dw, dh)
-            destX = sx;
-            destY = sy;
-            destWidth = sw;
-            destHeight = sh;
-            sourceX = 0;
-            sourceY = 0;
-            sourceWidth = texture.width || 1;
-            sourceHeight = texture.height || 1;
-        } else if (arguments.length === 3) {
-            // drawImage(texture, dx, dy)
-            destX = sx;
-            destY = sy;
-            destWidth = texture.width || 1;
-            destHeight = texture.height || 1;
-            sourceX = 0;
-            sourceY = 0;
-            sourceWidth = texture.width || 1;
-            sourceHeight = texture.height || 1;
-        }
-        
-        // Create vertices for the destination rectangle
-        const vertices = new Float32Array([
-            destX, destY,
-            destX + destWidth, destY,
-            destX, destY + destHeight,
-            destX + destWidth, destY + destHeight
-        ]);
-        
-        // Create texture coordinates (mapping source rectangle to destination)
-        const texCoords = new Float32Array([
-            sourceX / (texture.width || 1), sourceY / (texture.height || 1),
-            (sourceX + sourceWidth) / (texture.width || 1), sourceY / (texture.height || 1),
-            sourceX / (texture.width || 1), (sourceY + sourceHeight) / (texture.height || 1),
-            (sourceX + sourceWidth) / (texture.width || 1), (sourceY + sourceHeight) / (texture.height || 1)
-        ]);
-        
-        const indices = new Uint16Array([0, 1, 2, 1, 2, 3]);
-        
-        // Set up vertex buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-        
-        const positionLoc = gl.getAttribLocation(program, 'a_position');
-        gl.enableVertexAttribArray(positionLoc);
-        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
-        
-        // Set up texture coordinate buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
-        
-        const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
-        gl.enableVertexAttribArray(texCoordLoc);
-        gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
-        
-        // Set up index buffer
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-        
-        // Set uniforms
-        const transformLoc = gl.getUniformLocation(program, 'u_transform');
-        gl.uniformMatrix3fv(transformLoc, false, this.state.transform);
-        
-        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-        gl.uniform2f(resolutionLoc, this.width, this.height);
-        
-        const tintLoc = gl.getUniformLocation(program, 'u_tint');
-        gl.uniform4f(tintLoc, 1, 1, 1, 1); // White tint (no change)
-        
-        // Bind texture
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture.texture || texture);
-        
-        const textureLoc = gl.getUniformLocation(program, 'u_texture');
-        gl.uniform1i(textureLoc, 0);
-          // Draw
-        gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
-    }
-    
-    // Fullscreen functionality
+    // Fullscreen functionality (keeping existing implementation)
     setupFullscreen() {
         // Create fullscreen button
         this.createFullscreenButton();
@@ -801,7 +895,9 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         document.addEventListener('fullscreenchange', () => this.handleFullscreenChange());
         document.addEventListener('webkitfullscreenchange', () => this.handleFullscreenChange());
         document.addEventListener('mozfullscreenchange', () => this.handleFullscreenChange());
-        document.addEventListener('MSFullscreenChange', () => this.handleFullscreenChange());        // Listen for escape key when canvas is focused
+        document.addEventListener('MSFullscreenChange', () => this.handleFullscreenChange());
+        
+        // Listen for escape key when canvas is focused
         this.canvas.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this.isFullscreen) {
                 e.preventDefault();
@@ -819,14 +915,17 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             }
         };
         document.addEventListener('keydown', this.globalEscapeHandler, true);
-    }    createFullscreenButton() {
+    }
+    
+    createFullscreenButton() {
         // Create a wrapper around the canvas if it doesn't exist
         let wrapper = this.canvas.parentElement;
         const needsWrapper = !wrapper || !wrapper.classList.contains('webgl-canvas-wrapper');
         
         if (needsWrapper) {
             wrapper = document.createElement('div');
-            wrapper.className = 'webgl-canvas-wrapper';            wrapper.style.cssText = `
+            wrapper.className = 'webgl-canvas-wrapper';
+            wrapper.style.cssText = `
                 position: relative;
                 display: inline-block;
                 width: ${this.displayWidth || this.canvas.offsetWidth || this.canvas.width}px;
@@ -842,7 +941,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         
         // Create the button
         this.fullscreenButton = document.createElement('button');
-        this.fullscreenButton.className = 'webgl-fullscreen-btn';        this.fullscreenButton.style.cssText = `
+        this.fullscreenButton.className = 'webgl-fullscreen-btn';
+        this.fullscreenButton.style.cssText = `
             position: absolute;
             bottom: 5px;
             right: 5px;
@@ -895,13 +995,16 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         // Store references
         this.wrapper = wrapper;
     }
-      toggleFullscreen() {
+    
+    toggleFullscreen() {
         if (this.isFullscreen) {
             this.exitFullscreen();
         } else {
             this.enterFullscreen();
         }
-    }enterFullscreen() {
+    }
+    
+    enterFullscreen() {
         // Store original styles and dimensions
         this.originalStyle = {
             width: this.canvas.style.width,
@@ -913,7 +1016,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             margin: this.canvas.style.margin,
             transform: this.canvas.style.transform
         };
-          // Store original canvas dimensions (these stay the same for drawing)
+        
+        // Store original canvas dimensions (these stay the same for drawing)
         this.originalDimensions = {
             width: this.canvas.width,
             height: this.canvas.height,
@@ -958,8 +1062,7 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
             image-rendering: crisp-edges !important;
         `;
         
-        // Canvas drawing dimensions stay the same - no need to update WebGL viewport
-          // Update button position for fullscreen
+        // Update button position for fullscreen
         if (this.fullscreenButton) {
             this.fullscreenButton.style.position = 'fixed';
             this.fullscreenButton.style.bottom = '5px';
@@ -992,7 +1095,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         // Dispatch custom event
         this.canvas.dispatchEvent(new CustomEvent('enterFullscreen'));
     }
-      exitFullscreen() {
+    
+    exitFullscreen() {
         // Restore original styles
         Object.keys(this.originalStyle).forEach(key => {
             this.canvas.style[key] = this.originalStyle[key] || '';
@@ -1003,7 +1107,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         this.canvas.height = this.originalDimensions.height;
         this.width = this.originalDimensions.width;
         this.height = this.originalDimensions.height;
-          // Restore CSS size if it was set
+        
+        // Restore CSS size if it was set
         if (this.originalDimensions.cssWidth) {
             this.canvas.style.width = this.originalDimensions.cssWidth;
         } else {
@@ -1014,7 +1119,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         } else {
             this.canvas.style.height = '';
         }
-          // Update wrapper size if we have a wrapper
+        
+        // Update wrapper size if we have a wrapper
         if (this.wrapper && this.wrapper.classList.contains('webgl-canvas-wrapper')) {
             this.wrapper.style.width = `${this.displayWidth || this.canvas.offsetWidth || this.canvas.width}px`;
             this.wrapper.style.height = `${this.displayHeight || this.canvas.offsetHeight || this.canvas.height}px`;
@@ -1022,7 +1128,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         
         // Update WebGL viewport
         this.gl.viewport(0, 0, this.width, this.height);
-          // Restore button position
+        
+        // Restore button position
         if (this.fullscreenButton) {
             this.fullscreenButton.style.position = 'absolute';
             this.fullscreenButton.style.bottom = '5px';
@@ -1050,7 +1157,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         // Dispatch custom event
         this.canvas.dispatchEvent(new CustomEvent('exitFullscreen'));
     }
-      handleFullscreenChange() {
+    
+    handleFullscreenChange() {
         // Check if we're still in browser fullscreen
         const isInBrowserFullscreen = !!(
             document.fullscreenElement ||
@@ -1069,7 +1177,8 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
     /**
      * Clean up resources and remove fullscreen elements
      * Call this when you're done with the canvas
-     */    cleanup() {
+     */
+    cleanup() {
         // Remove global escape handler
         if (this.globalEscapeHandler) {
             document.removeEventListener('keydown', this.globalEscapeHandler, true);
@@ -1091,12 +1200,17 @@ class WebGLCanvas {    constructor(canvas, options = {}) {
         
         // Clean up WebGL resources
         if (this.gl) {
-            if (this.vertexBuffer) this.gl.deleteBuffer(this.vertexBuffer);
-            if (this.indexBuffer) this.gl.deleteBuffer(this.indexBuffer);
+            // Clean up batch buffers
+            Object.values(this.batchBuffers).forEach(batch => {
+                if (batch.vertices) this.gl.deleteBuffer(batch.vertices);
+                if (batch.colors) this.gl.deleteBuffer(batch.colors);
+                if (batch.indices) this.gl.deleteBuffer(batch.indices);
+                if (batch.instanceData) this.gl.deleteBuffer(batch.instanceData);
+            });
             
             // Clean up shaders
             Object.values(this.shaders).forEach(shader => {
-                if (shader.program) this.gl.deleteProgram(shader.program);
+                if (shader) this.gl.deleteProgram(shader);
             });
         }
     }

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas vs WebGL Canvas - Performance Stress Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5rem;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .comparison-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        .canvas-section {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+        
+        .canvas-title {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        
+        .canvas-wrapper {
+            position: relative;
+            margin: 20px 0;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        canvas {
+            display: block;
+            background: #000;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .stat-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .stat-label {
+            font-size: 0.8rem;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #fff;
+        }
+        
+        .fps-good { color: #4ade80; }
+        .fps-medium { color: #fbbf24; }
+        .fps-bad { color: #f87171; }
+        
+        .controls {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .control-group {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button.danger {
+            background: linear-gradient(45deg, #f87171, #ef4444);
+        }
+        
+        button.danger:hover {
+            box-shadow: 0 6px 20px rgba(248, 113, 113, 0.4);
+        }
+        
+        .object-count {
+            font-size: 1.1rem;
+            margin: 0 15px;
+            padding: 8px 16px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .performance-summary {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+        
+        .performance-comparison {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .comparison-stat {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .warning {
+            background: rgba(251, 191, 36, 0.1);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        @media (max-width: 768px) {
+            .comparison-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .control-group {
+                flex-direction: column;
+            }
+            
+            .performance-comparison {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Canvas vs WebGL Canvas Performance Test</h1>
+        
+        <div class="warning">
+            ⚠️ <strong>Performance Warning:</strong> This stress test will push both rendering systems to their limits. 
+            High object counts may cause performance issues or browser slowdown.
+        </div>
+        
+        <div class="controls">
+            <h3>🎮 Test Controls</h3>
+            <div class="control-group">
+                <button onclick="startTest()">▶️ Start Test</button>
+                <button onclick="stopTest()" class="danger">⏹️ Stop Test</button>
+                <button onclick="addObjects()">➕ Add 500 Objects</button>
+                <button onclick="removeObjects()">➖ Remove 500 Objects</button>
+            </div>
+            <div class="control-group">
+                <span class="object-count">Objects: <span id="objectCount">0</span></span>
+                <button onclick="resetTest()">🔄 Reset Test</button>
+                <button onclick="toggleAnimation()">⏸️ Pause Animation</button>
+            </div>
+        </div>
+        
+        <div class="comparison-container">
+            <!-- Regular HTML5 Canvas -->
+            <div class="canvas-section">
+                <div class="canvas-title">🎨 HTML5 Canvas (CPU)</div>
+                <div class="canvas-wrapper">
+                    <canvas id="regularCanvas" width="600" height="400"></canvas>
+                </div>
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-label">FPS</div>
+                        <div class="stat-value" id="regularFps">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Frame Time (ms)</div>
+                        <div class="stat-value" id="regularFrameTime">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Objects Rendered</div>
+                        <div class="stat-value" id="regularObjects">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Draw Calls</div>
+                        <div class="stat-value" id="regularDrawCalls">0</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- WebGL Canvas -->
+            <div class="canvas-section">
+                <div class="canvas-title">⚡ WebGL Canvas (GPU)</div>
+                <div class="canvas-wrapper">
+                    <canvas id="webglCanvas" width="600" height="400"></canvas>
+                </div>
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-label">FPS</div>
+                        <div class="stat-value" id="webglFps">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Frame Time (ms)</div>
+                        <div class="stat-value" id="webglFrameTime">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Objects Rendered</div>
+                        <div class="stat-value" id="webglObjects">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Draw Calls</div>
+                        <div class="stat-value" id="webglDrawCalls">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="performance-summary">
+            <h3>📊 Performance Comparison</h3>
+            <div class="performance-comparison">
+                <div class="comparison-stat">
+                    <div class="stat-label">FPS Difference</div>
+                    <div class="stat-value" id="fpsDifference">0</div>
+                </div>
+                <div class="comparison-stat">
+                    <div class="stat-label">Performance Ratio</div>
+                    <div class="stat-value" id="performanceRatio">1.0x</div>
+                </div>
+                <div class="comparison-stat">
+                    <div class="stat-label">Winner</div>
+                    <div class="stat-value" id="winner">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../src/webgl-canvas.js"></script>
+    <script>
+        // Test configuration
+        let testRunning = false;
+        let animationPaused = false;
+        let objectCount = 0;
+        let objects = [];
+        
+        // Canvas contexts
+        let regularCanvas, regularCtx;
+        let webglCanvas, webglCtx;
+        
+        // Animation IDs
+        let regularAnimationId, webglAnimationId;
+        
+        // Performance tracking
+        let regularStats = { fps: 0, frameTime: 0, frameCount: 0, lastTime: 0, drawCalls: 0 };
+        let webglStats = { fps: 0, frameTime: 0, frameCount: 0, lastTime: 0, drawCalls: 0 };
+        
+        // Initialize when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeCanvases();
+            updateUI();
+        });
+        
+        function initializeCanvases() {
+            // Regular Canvas setup
+            regularCanvas = document.getElementById('regularCanvas');
+            regularCtx = regularCanvas.getContext('2d');
+            
+            // WebGL Canvas setup
+            webglCanvas = document.getElementById('webglCanvas');
+            webglCtx = new WebGLCanvas(webglCanvas);
+            
+            console.log('Canvases initialized successfully');
+        }
+        
+        function createObjects(count) {
+            const newObjects = [];
+            
+            for (let i = 0; i < count; i++) {
+                const obj = {
+                    x: Math.random() * 550,
+                    y: Math.random() * 350,
+                    vx: (Math.random() - 0.5) * 200,
+                    vy: (Math.random() - 0.5) * 200,
+                    size: Math.random() * 20 + 5,
+                    color: `hsl(${Math.random() * 360}, 70%, 60%)`,
+                    type: Math.random() > 0.5 ? 'circle' : 'rect',
+                    rotation: Math.random() * Math.PI * 2,
+                    rotSpeed: (Math.random() - 0.5) * 5
+                };
+                newObjects.push(obj);
+            }
+            
+            objects.push(...newObjects);
+            objectCount = objects.length;
+            updateObjectCount();
+        }
+        
+        function updateObjects(deltaTime) {
+            if (animationPaused) return;
+            
+            for (let obj of objects) {
+                // Update position
+                obj.x += obj.vx * deltaTime;
+                obj.y += obj.vy * deltaTime;
+                obj.rotation += obj.rotSpeed * deltaTime;
+                
+                // Boundary wrapping
+                if (obj.x < -obj.size) obj.x = 600 + obj.size;
+                if (obj.x > 600 + obj.size) obj.x = -obj.size;
+                if (obj.y < -obj.size) obj.y = 400 + obj.size;
+                if (obj.y > 400 + obj.size) obj.y = -obj.size;
+            }
+        }
+        
+        function renderRegularCanvas() {
+            const startTime = performance.now();
+            
+            // Clear canvas
+            regularCtx.fillStyle = '#000000';
+            regularCtx.fillRect(0, 0, 600, 400);
+            
+            let drawCalls = 1; // Clear counts as one draw call
+            
+            // Render objects
+            for (let obj of objects) {
+                regularCtx.save();
+                regularCtx.translate(obj.x, obj.y);
+                regularCtx.rotate(obj.rotation);
+                regularCtx.fillStyle = obj.color;
+                
+                if (obj.type === 'circle') {
+                    regularCtx.beginPath();
+                    regularCtx.arc(0, 0, obj.size, 0, Math.PI * 2);
+                    regularCtx.fill();
+                } else {
+                    regularCtx.fillRect(-obj.size/2, -obj.size/2, obj.size, obj.size);
+                }
+                
+                regularCtx.restore();
+                drawCalls++;
+            }
+            
+            // Update stats
+            const endTime = performance.now();
+            updateStats(regularStats, endTime - startTime, drawCalls);
+        }
+        
+        function renderWebGLCanvas() {
+            const startTime = performance.now();
+            
+            // Clear canvas
+            webglCtx.clear();
+            
+            let drawCalls = 1; // Clear counts as one draw call
+            
+            // Render objects (they get batched automatically)
+            for (let obj of objects) {
+                webglCtx.save();
+                webglCtx.translate(obj.x, obj.y);
+                webglCtx.rotate(obj.rotation);
+                webglCtx.fillStyle = obj.color;
+                
+                if (obj.type === 'circle') {
+                    webglCtx.fillCircle(0, 0, obj.size);
+                } else {
+                    webglCtx.fillRect(-obj.size/2, -obj.size/2, obj.size, obj.size);
+                }
+                
+                webglCtx.restore();
+                // Note: drawCalls will be much lower due to batching
+            }
+            
+            // CRITICAL: Flush all batched objects to GPU
+            webglCtx.flush();
+            
+            // Calculate actual draw calls (much fewer due to batching)
+            drawCalls = Math.ceil(objects.filter(o => o.type === 'rect').length / 1000) + 
+                        Math.ceil(objects.filter(o => o.type === 'circle').length / 1000) + 1;
+            
+            // Update stats
+            const endTime = performance.now();
+            updateStats(webglStats, endTime - startTime, drawCalls);
+        }
+        
+        function updateStats(stats, frameTime, drawCalls) {
+            const currentTime = performance.now();
+            
+            stats.frameTime = frameTime;
+            stats.drawCalls = drawCalls;
+            stats.frameCount++;
+            
+            // Calculate FPS every second
+            if (currentTime - stats.lastTime >= 1000) {
+                stats.fps = Math.round(stats.frameCount * 1000 / (currentTime - stats.lastTime));
+                stats.frameCount = 0;
+                stats.lastTime = currentTime;
+            }
+        }
+        
+        function regularCanvasLoop() {
+            if (!testRunning) return;
+            
+            const deltaTime = 1/60; // Assume 60fps for consistent physics
+            updateObjects(deltaTime);
+            renderRegularCanvas();
+            
+            regularAnimationId = requestAnimationFrame(regularCanvasLoop);
+        }
+        
+        function webglCanvasLoop() {
+            if (!testRunning) return;
+            
+            const deltaTime = 1/60; // Same physics as regular canvas
+            renderWebGLCanvas();
+            
+            webglAnimationId = requestAnimationFrame(webglCanvasLoop);
+        }
+        
+        function updateUI() {
+            // Update regular canvas stats
+            document.getElementById('regularFps').textContent = regularStats.fps;
+            document.getElementById('regularFps').className = 'stat-value ' + getFpsClass(regularStats.fps);
+            document.getElementById('regularFrameTime').textContent = regularStats.frameTime.toFixed(1);
+            document.getElementById('regularObjects').textContent = objectCount;
+            document.getElementById('regularDrawCalls').textContent = regularStats.drawCalls;
+            
+            // Update WebGL canvas stats
+            document.getElementById('webglFps').textContent = webglStats.fps;
+            document.getElementById('webglFps').className = 'stat-value ' + getFpsClass(webglStats.fps);
+            document.getElementById('webglFrameTime').textContent = webglStats.frameTime.toFixed(1);
+            document.getElementById('webglObjects').textContent = objectCount;
+            document.getElementById('webglDrawCalls').textContent = webglStats.drawCalls;
+            
+            // Update comparison stats
+            const fpsDiff = webglStats.fps - regularStats.fps;
+            const perfRatio = regularStats.fps > 0 ? (webglStats.fps / regularStats.fps) : 1;
+            const winner = webglStats.fps > regularStats.fps ? 'WebGL Canvas' : 
+                          regularStats.fps > webglStats.fps ? 'HTML5 Canvas' : 'Tie';
+            
+            document.getElementById('fpsDifference').textContent = fpsDiff > 0 ? `+${fpsDiff}` : fpsDiff;
+            document.getElementById('fpsDifference').className = 'stat-value ' + (fpsDiff > 0 ? 'fps-good' : fpsDiff < 0 ? 'fps-bad' : '');
+            document.getElementById('performanceRatio').textContent = `${perfRatio.toFixed(1)}x`;
+            document.getElementById('performanceRatio').className = 'stat-value ' + (perfRatio > 1 ? 'fps-good' : perfRatio < 1 ? 'fps-bad' : '');
+            document.getElementById('winner').textContent = winner;
+            document.getElementById('winner').className = 'stat-value ' + (winner === 'WebGL Canvas' ? 'fps-good' : winner === 'HTML5 Canvas' ? 'fps-bad' : '');
+            
+            if (testRunning) {
+                requestAnimationFrame(updateUI);
+            }
+        }
+        
+        function getFpsClass(fps) {
+            if (fps >= 50) return 'fps-good';
+            if (fps >= 30) return 'fps-medium';
+            return 'fps-bad';
+        }
+        
+        function updateObjectCount() {
+            document.getElementById('objectCount').textContent = objectCount;
+        }
+        
+        // Control functions
+        function startTest() {
+            if (testRunning) return;
+            
+            testRunning = true;
+            
+            // Initialize stats
+            regularStats = { fps: 0, frameTime: 0, frameCount: 0, lastTime: performance.now(), drawCalls: 0 };
+            webglStats = { fps: 0, frameTime: 0, frameCount: 0, lastTime: performance.now(), drawCalls: 0 };
+            
+            // Start with some objects if none exist
+            if (objectCount === 0) {
+                createObjects(100);
+            }
+            
+            // Start rendering loops
+            regularCanvasLoop();
+            webglCanvasLoop();
+            updateUI();
+            
+            console.log('Stress test started with', objectCount, 'objects');
+        }
+        
+        function stopTest() {
+            testRunning = false;
+            
+            if (regularAnimationId) {
+                cancelAnimationFrame(regularAnimationId);
+                regularAnimationId = null;
+            }
+            
+            if (webglAnimationId) {
+                cancelAnimationFrame(webglAnimationId);
+                webglAnimationId = null;
+            }
+            
+            console.log('Stress test stopped');
+        }
+        
+        function addObjects() {
+            createObjects(500);
+            console.log('Added 500 objects. Total:', objectCount);
+        }
+        
+        function removeObjects() {
+            const toRemove = Math.min(500, objects.length);
+            objects.splice(0, toRemove);
+            objectCount = objects.length;
+            updateObjectCount();
+            console.log('Removed', toRemove, 'objects. Total:', objectCount);
+        }
+        
+        function resetTest() {
+            stopTest();
+            objects = [];
+            objectCount = 0;
+            updateObjectCount();
+            
+            // Clear both canvases
+            regularCtx.fillStyle = '#000000';
+            regularCtx.fillRect(0, 0, 600, 400);
+            webglCtx.clear();
+            
+            // Reset stats displays
+            regularStats = { fps: 0, frameTime: 0, frameCount: 0, lastTime: 0, drawCalls: 0 };
+            webglStats = { fps: 0, frameTime: 0, frameCount: 0, lastTime: 0, drawCalls: 0 };
+            updateUI();
+            
+            console.log('Test reset');
+        }
+        
+        function toggleAnimation() {
+            animationPaused = !animationPaused;
+            const button = event.target;
+            button.textContent = animationPaused ? '▶️ Resume Animation' : '⏸️ Pause Animation';
+            console.log('Animation', animationPaused ? 'paused' : 'resumed');
+        }
+    </script>
+</body>
+</html>
