@@ -33,9 +33,31 @@ class WebGLCanvas {
             fillStyle: [1, 1, 1, 1], // white
             strokeStyle: [0, 0, 0, 1], // black
             lineWidth: 1,
+            lineCap: 'butt',
+            lineJoin: 'miter',
+            miterLimit: 10,
+            lineDashOffset: 0,
+            lineDash: [],
+            globalAlpha: 1,
+            globalCompositeOperation: 'source-over',
+            textAlign: 'start',
+            textBaseline: 'alphabetic',
+            font: '10px sans-serif',
+            shadowColor: [0, 0, 0, 0],
+            shadowBlur: 0,
+            shadowOffsetX: 0,
+            shadowOffsetY: 0,
+            imageSmoothingEnabled: true,
             transform: this.createIdentityMatrix()
         };
         this.stateStack = [];
+
+        // Path state
+        this.currentPath = [];
+        this.pathStartX = 0;
+        this.pathStartY = 0;
+        this.currentX = 0;
+        this.currentY = 0;
 
         // Fullscreen state
         this.isFullscreen = false;
@@ -47,9 +69,16 @@ class WebGLCanvas {
         this.batches = {
             rectangles: [],
             circles: [],
-            lines: []
+            ellipses: [],
+            lines: [],
+            images: [],
+            text: []
         };
         this.batchBuffers = {};
+
+        // Texture cache for images
+        this.textureCache = new Map();
+        this.fontCache = new Map();
 
         // Initialize WebGL
         this.init();
@@ -137,6 +166,24 @@ class WebGLCanvas {
             indexData: new Uint16Array(batchSize * 6)        // 6 indices per circle
         };
 
+        // Ellipse batch buffer
+        this.batchBuffers.ellipses = {
+            vertices: gl.createBuffer(),
+            colors: gl.createBuffer(),
+            centers: gl.createBuffer(),
+            radii: gl.createBuffer(),
+            indices: gl.createBuffer(),
+            maxVertices: batchSize * 4,
+            maxIndices: batchSize * 6,
+            currentVertices: 0,
+            currentIndices: 0,
+            vertexData: new Float32Array(batchSize * 4 * 2),
+            colorData: new Float32Array(batchSize * 4 * 4),
+            centerData: new Float32Array(batchSize * 4 * 2),
+            radiusData: new Float32Array(batchSize * 4 * 2), // radiusX, radiusY
+            indexData: new Uint16Array(batchSize * 6)
+        };
+
         // Line batch buffer
         this.batchBuffers.lines = {
             vertices: gl.createBuffer(),
@@ -145,6 +192,20 @@ class WebGLCanvas {
             currentVertices: 0,
             vertexData: new Float32Array(batchSize * 2 * 2), // x, y for each vertex
             colorData: new Float32Array(batchSize * 2 * 4)   // r, g, b, a for each vertex
+        };
+
+        // Image batch buffer
+        this.batchBuffers.images = {
+            vertices: gl.createBuffer(),
+            texCoords: gl.createBuffer(),
+            indices: gl.createBuffer(),
+            maxVertices: batchSize * 4,
+            maxIndices: batchSize * 6,
+            currentVertices: 0,
+            currentIndices: 0,
+            vertexData: new Float32Array(batchSize * 4 * 2),
+            texCoordData: new Float32Array(batchSize * 4 * 2),
+            indexData: new Uint16Array(batchSize * 6)
         };
     }
 
@@ -278,7 +339,7 @@ class WebGLCanvas {
         }
     `;
 
-        // Fixed circle vertex shader
+        // Circle vertex shader
         const circleVertexShader = `
         precision mediump float;
         attribute vec2 a_position;
@@ -292,26 +353,18 @@ class WebGLCanvas {
         varying vec2 v_fragCoord;
         
         void main() {
-            // Convert to normalized device coordinates (-1 to 1)
             vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
-            normalized.y = -normalized.y; // Flip Y coordinate
+            normalized.y = -normalized.y;
             
             gl_Position = vec4(normalized, 0, 1);
             v_color = a_color;
-            
-            // Normalize center coordinates
             v_center = (a_center / u_resolution) * 2.0 - 1.0;
             v_center.y = -v_center.y;
-            
-            // Normalize radius based on pixel coordinates, not NDC
             v_radius = a_radius;
-            
-            // Pass fragment coordinates in pixel space
             v_fragCoord = a_position;
         }
     `;
 
-        // Fixed circle fragment shader - use pixel space distance
         const circleFragmentShader = `
         precision mediump float;
         varying vec4 v_color;
@@ -321,9 +374,8 @@ class WebGLCanvas {
         uniform vec2 u_resolution;
         
         void main() {
-            // Convert center back to pixel coordinates for distance calculation
             vec2 centerPixels = (v_center + 1.0) * 0.5 * u_resolution;
-            centerPixels.y = u_resolution.y - centerPixels.y; // Flip Y back
+            centerPixels.y = u_resolution.y - centerPixels.y;
             
             float dist = distance(v_fragCoord, centerPixels);
             if (dist > v_radius) {
@@ -333,9 +385,89 @@ class WebGLCanvas {
         }
     `;
 
+        // Ellipse vertex shader
+        const ellipseVertexShader = `
+        precision mediump float;
+        attribute vec2 a_position;
+        attribute vec4 a_color;
+        attribute vec2 a_center;
+        attribute vec2 a_radius;
+        uniform vec2 u_resolution;
+        varying vec4 v_color;
+        varying vec2 v_center;
+        varying vec2 v_radius;
+        varying vec2 v_fragCoord;
+        
+        void main() {
+            vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+            normalized.y = -normalized.y;
+            
+            gl_Position = vec4(normalized, 0, 1);
+            v_color = a_color;
+            v_center = (a_center / u_resolution) * 2.0 - 1.0;
+            v_center.y = -v_center.y;
+            v_radius = a_radius;
+            v_fragCoord = a_position;
+        }
+    `;
+
+        const ellipseFragmentShader = `
+        precision mediump float;
+        varying vec4 v_color;
+        varying vec2 v_center;
+        varying vec2 v_radius;
+        varying vec2 v_fragCoord;
+        uniform vec2 u_resolution;
+        
+        void main() {
+            vec2 centerPixels = (v_center + 1.0) * 0.5 * u_resolution;
+            centerPixels.y = u_resolution.y - centerPixels.y;
+            
+            vec2 diff = v_fragCoord - centerPixels;
+            float ellipse = (diff.x * diff.x) / (v_radius.x * v_radius.x) + 
+                           (diff.y * diff.y) / (v_radius.y * v_radius.y);
+            
+            if (ellipse > 1.0) {
+                discard;
+            }
+            gl_FragColor = v_color;
+        }
+    `;
+
+        // Image vertex shader
+        const imageVertexShader = `
+        precision mediump float;
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        uniform vec2 u_resolution;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+            normalized.y = -normalized.y;
+            
+            gl_Position = vec4(normalized, 0, 1);
+            v_texCoord = a_texCoord;
+        }
+    `;
+
+        const imageFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform float u_globalAlpha;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            gl_FragColor = texture2D(u_texture, v_texCoord);
+            gl_FragColor.a *= u_globalAlpha;
+        }
+    `;
+
         this.shaders.batchedRect = this.createShaderProgram(batchedRectVertexShader, batchedFragmentShader);
         this.shaders.batchedCircle = this.createShaderProgram(circleVertexShader, circleFragmentShader);
+        this.shaders.batchedEllipse = this.createShaderProgram(ellipseVertexShader, ellipseFragmentShader);
         this.shaders.batchedLine = this.createShaderProgram(batchedRectVertexShader, batchedFragmentShader);
+        this.shaders.image = this.createShaderProgram(imageVertexShader, imageFragmentShader);
     }
 
     // Canvas-like API methods
@@ -359,13 +491,144 @@ class WebGLCanvas {
     }
 
     /*
+     * Set global alpha (transparency)
+     * @param {number} alpha - Alpha value (0-1)
+     */
+    set globalAlpha(alpha) {
+        this.state.globalAlpha = Math.max(0, Math.min(1, alpha));
+    }
+
+    get globalAlpha() {
+        return this.state.globalAlpha;
+    }
+
+    /*
+     * Set line cap style
+     * @param {string} cap - 'butt', 'round', or 'square'
+     */
+    set lineCap(cap) {
+        this.state.lineCap = cap;
+    }
+
+    get lineCap() {
+        return this.state.lineCap;
+    }
+
+    /*
+     * Set line join style
+     * @param {string} join - 'miter', 'round', or 'bevel'
+     */
+    set lineJoin(join) {
+        this.state.lineJoin = join;
+    }
+
+    get lineJoin() {
+        return this.state.lineJoin;
+    }
+
+    /*
+     * Set text properties
+     */
+    set font(font) {
+        this.state.font = font;
+    }
+
+    get font() {
+        return this.state.font;
+    }
+
+    set textAlign(align) {
+        this.state.textAlign = align;
+    }
+
+    get textAlign() {
+        return this.state.textAlign;
+    }
+
+    set textBaseline(baseline) {
+        this.state.textBaseline = baseline;
+    }
+
+    get textBaseline() {
+        return this.state.textBaseline;
+    }
+
+    /*
      * Flush all batches to GPU
-     * This is where the magic happens - renders all batched objects efficiently
      */
     flush() {
         this.flushRectangles();
         this.flushCircles();
+        this.flushEllipses();
         this.flushLines();
+        this.flushImages();
+    }
+
+    /*
+     * Flush image batch
+     */
+    flushImages() {
+        // Images are rendered immediately, so nothing to flush
+    }
+
+    /*
+     * Flush ellipse batch
+     */
+    flushEllipses() {
+        const batch = this.batchBuffers.ellipses;
+        if (batch.currentVertices === 0) return;
+
+        const gl = this.gl;
+        const program = this.shaders.batchedEllipse;
+
+        gl.useProgram(program);
+
+        // Upload vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Upload color data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.colors);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.colorData.subarray(0, batch.currentVertices * 4), gl.DYNAMIC_DRAW);
+
+        const colorLoc = gl.getAttribLocation(program, 'a_color');
+        gl.enableVertexAttribArray(colorLoc);
+        gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 0, 0);
+
+        // Upload center data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.centers);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.centerData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+
+        const centerLoc = gl.getAttribLocation(program, 'a_center');
+        gl.enableVertexAttribArray(centerLoc);
+        gl.vertexAttribPointer(centerLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Upload radius data (radiusX, radiusY)
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.radii);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.radiusData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+
+        const radiusLoc = gl.getAttribLocation(program, 'a_radius');
+        gl.enableVertexAttribArray(radiusLoc);
+        gl.vertexAttribPointer(radiusLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Upload index data
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.indexData.subarray(0, batch.currentIndices), gl.DYNAMIC_DRAW);
+
+        // Set uniforms
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        gl.uniform2f(resolutionLoc, this.width, this.height);
+
+        // Draw all ellipses
+        gl.drawElements(gl.TRIANGLES, batch.currentIndices, gl.UNSIGNED_SHORT, 0);
+
+        // Reset batch
+        batch.currentVertices = 0;
+        batch.currentIndices = 0;
     }
 
     /*
@@ -565,6 +828,153 @@ class WebGLCanvas {
     }
 
     /*
+ * Set shadow properties
+ */
+    set shadowColor(color) {
+        this.state.shadowColor = this.parseColor(color);
+    }
+
+    get shadowColor() {
+        return this.state.shadowColor;
+    }
+
+    set shadowBlur(blur) {
+        this.state.shadowBlur = Math.max(0, blur);
+    }
+
+    get shadowBlur() {
+        return this.state.shadowBlur;
+    }
+
+    set shadowOffsetX(offset) {
+        this.state.shadowOffsetX = offset;
+    }
+
+    get shadowOffsetX() {
+        return this.state.shadowOffsetX;
+    }
+
+    set shadowOffsetY(offset) {
+        this.state.shadowOffsetY = offset;
+    }
+
+    get shadowOffsetY() {
+        return this.state.shadowOffsetY;
+    }
+
+    /*
+ * Set image smoothing
+ */
+    set imageSmoothingEnabled(enabled) {
+        this.state.imageSmoothingEnabled = enabled;
+
+        // Update existing textures
+        this.textureCache.forEach((texture) => {
+            const gl = this.gl;
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+
+            if (enabled) {
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            } else {
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            }
+        });
+    }
+
+    get imageSmoothingEnabled() {
+        return this.state.imageSmoothingEnabled;
+    }
+
+    /*
+     * Set image smoothing quality
+     */
+    set imageSmoothingQuality(quality) {
+        const validQualities = ['low', 'medium', 'high'];
+        if (validQualities.includes(quality)) {
+            this.state.imageSmoothingQuality = quality;
+        }
+    }
+
+    get imageSmoothingQuality() {
+        return this.state.imageSmoothingQuality || 'low';
+    }
+
+    /*
+    * Set global composite operation
+    */
+    set globalCompositeOperation(operation) {
+        const validOperations = [
+            'source-over', 'source-in', 'source-out', 'source-atop',
+            'destination-over', 'destination-in', 'destination-out', 'destination-atop',
+            'lighter', 'copy', 'xor', 'multiply', 'screen', 'overlay',
+            'darken', 'lighten', 'color-dodge', 'color-burn',
+            'hard-light', 'soft-light', 'difference', 'exclusion'
+        ];
+
+        if (validOperations.includes(operation)) {
+            this.state.globalCompositeOperation = operation;
+            // Update WebGL blend mode
+            this.updateBlendMode(operation);
+        }
+    }
+
+    get globalCompositeOperation() {
+        return this.state.globalCompositeOperation;
+    }
+
+    /*
+    * Update WebGL blend mode based on composite operation
+    */
+    updateBlendMode(operation) {
+        const gl = this.gl;
+
+        switch (operation) {
+            case 'source-over':
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                break;
+            case 'source-in':
+                gl.blendFunc(gl.DST_ALPHA, gl.ZERO);
+                break;
+            case 'source-out':
+                gl.blendFunc(gl.ONE_MINUS_DST_ALPHA, gl.ZERO);
+                break;
+            case 'destination-over':
+                gl.blendFunc(gl.ONE_MINUS_DST_ALPHA, gl.ONE);
+                break;
+            case 'lighter':
+                gl.blendFunc(gl.ONE, gl.ONE);
+                break;
+            case 'multiply':
+                gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+                break;
+            case 'screen':
+                gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
+                break;
+            default:
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                break;
+        }
+    }
+
+    /*
+    * Add color stop to gradient
+    * @param {number} offset - Position (0-1)
+    * @param {string} color - Color at this position
+    */
+    addColorStop(gradient, offset, color) {
+        if (gradient && gradient.colorStops) {
+            gradient.colorStops.push({
+                offset: Math.max(0, Math.min(1, offset)),
+                color: this.parseColor(color)
+            });
+            // Sort by offset
+            gradient.colorStops.sort((a, b) => a.offset - b.offset);
+        }
+    }
+
+    /*
         * Parse color input
         * Converts hex, rgb, rgba, or array formats to RGBA array
         * @param {string|Array} color - Color value
@@ -573,14 +983,50 @@ class WebGLCanvas {
     parseColor(color) {
         if (Array.isArray(color)) return color;
 
+        // Handle gradient objects
+        if (color && typeof color === 'object' && color.type) {
+            if (color.type === 'linear' || color.type === 'radial') {
+                return this.evaluateGradient(color, 0.5, 0.5); // Default to middle
+            }
+            if (color.type === 'pattern') {
+                return [1, 1, 1, 1]; // Default white for patterns
+            }
+        }
+
         if (typeof color === 'string') {
+            // Handle named colors
+            const namedColors = {
+                'transparent': [0, 0, 0, 0],
+                'black': [0, 0, 0, 1],
+                'white': [1, 1, 1, 1],
+                'red': [1, 0, 0, 1],
+                'green': [0, 1, 0, 1],
+                'blue': [0, 0, 1, 1],
+                'yellow': [1, 1, 0, 1],
+                'cyan': [0, 1, 1, 1],
+                'magenta': [1, 0, 1, 1],
+                'gray': [0.5, 0.5, 0.5, 1],
+                'grey': [0.5, 0.5, 0.5, 1]
+            };
+
+            if (namedColors[color.toLowerCase()]) {
+                return namedColors[color.toLowerCase()];
+            }
+
             if (color.startsWith('#')) {
-                // Hex color
+                // Hex color - support both 3 and 6 character formats
                 const hex = color.substring(1);
-                const r = parseInt(hex.substring(0, 2), 16) / 255;
-                const g = parseInt(hex.substring(2, 4), 16) / 255;
-                const b = parseInt(hex.substring(4, 6), 16) / 255;
-                return [r, g, b, 1];
+                if (hex.length === 3) {
+                    const r = parseInt(hex[0] + hex[0], 16) / 255;
+                    const g = parseInt(hex[1] + hex[1], 16) / 255;
+                    const b = parseInt(hex[2] + hex[2], 16) / 255;
+                    return [r, g, b, 1];
+                } else if (hex.length === 6) {
+                    const r = parseInt(hex.substring(0, 2), 16) / 255;
+                    const g = parseInt(hex.substring(2, 4), 16) / 255;
+                    const b = parseInt(hex.substring(4, 6), 16) / 255;
+                    return [r, g, b, 1];
+                }
             }
 
             if (color.startsWith('rgb')) {
@@ -636,14 +1082,89 @@ class WebGLCanvas {
     }
 
     /*
+ * Evaluate gradient color at specific coordinates
+ */
+    evaluateGradient(gradient, x, y) {
+        if (!gradient.colorStops || gradient.colorStops.length === 0) {
+            return [1, 1, 1, 1]; // Default white
+        }
+
+        if (gradient.colorStops.length === 1) {
+            return gradient.colorStops[0].color;
+        }
+
+        let t = 0;
+        if (gradient.type === 'linear') {
+            // Calculate position along gradient line
+            const dx = gradient.x1 - gradient.x0;
+            const dy = gradient.y1 - gradient.y0;
+            const length = Math.sqrt(dx * dx + dy * dy);
+
+            if (length > 0) {
+                const px = x - gradient.x0;
+                const py = y - gradient.y0;
+                t = (px * dx + py * dy) / (length * length);
+            }
+        } else if (gradient.type === 'radial') {
+            // Calculate distance from center
+            const dx = x - gradient.x0;
+            const dy = y - gradient.y0;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            t = dist / gradient.r1;
+        }
+
+        t = Math.max(0, Math.min(1, t));
+
+        // Find surrounding color stops
+        let stop1 = gradient.colorStops[0];
+        let stop2 = gradient.colorStops[gradient.colorStops.length - 1];
+
+        for (let i = 0; i < gradient.colorStops.length - 1; i++) {
+            if (t >= gradient.colorStops[i].offset && t <= gradient.colorStops[i + 1].offset) {
+                stop1 = gradient.colorStops[i];
+                stop2 = gradient.colorStops[i + 1];
+                break;
+            }
+        }
+
+        // Interpolate between colors
+        if (stop1.offset === stop2.offset) {
+            return stop1.color;
+        }
+
+        const factor = (t - stop1.offset) / (stop2.offset - stop1.offset);
+        return [
+            stop1.color[0] + (stop2.color[0] - stop1.color[0]) * factor,
+            stop1.color[1] + (stop2.color[1] - stop1.color[1]) * factor,
+            stop1.color[2] + (stop2.color[2] - stop1.color[2]) * factor,
+            stop1.color[3] + (stop2.color[3] - stop1.color[3]) * factor
+        ];
+    }
+
+    /*
         * Save the current state
-        * Saves fillStyle, strokeStyle, lineWidth, and transform to the state stack
+        * Saves all drawing state to the state stack
     */
     save() {
         this.stateStack.push({
             fillStyle: [...this.state.fillStyle],
             strokeStyle: [...this.state.strokeStyle],
             lineWidth: this.state.lineWidth,
+            lineCap: this.state.lineCap,
+            lineJoin: this.state.lineJoin,
+            miterLimit: this.state.miterLimit,
+            lineDashOffset: this.state.lineDashOffset,
+            lineDash: [...this.state.lineDash],
+            globalAlpha: this.state.globalAlpha,
+            globalCompositeOperation: this.state.globalCompositeOperation,
+            textAlign: this.state.textAlign,
+            textBaseline: this.state.textBaseline,
+            font: this.state.font,
+            shadowColor: [...this.state.shadowColor],
+            shadowBlur: this.state.shadowBlur,
+            shadowOffsetX: this.state.shadowOffsetX,
+            shadowOffsetY: this.state.shadowOffsetY,
+            imageSmoothingEnabled: this.state.imageSmoothingEnabled,
             transform: [...this.state.transform]
         });
     }
@@ -658,7 +1179,383 @@ class WebGLCanvas {
         }
     }
 
-    // Drawing methods (now use batching)
+    /*
+     * Add rectangle to batch
+     */
+    addRectangleToBatch(x, y, width, height, color) {
+        const batch = this.batchBuffers.rectangles;
+
+        if (batch.currentVertices + 4 > batch.maxVertices) {
+            this.flushRectangles();
+            batch.currentVertices = 0;
+            batch.currentIndices = 0;
+        }
+
+        // Transform rectangle vertices properly
+        const [x1, y1] = this.transformPoint(x, y);
+        const [x2, y2] = this.transformPoint(x + width, y);
+        const [x3, y3] = this.transformPoint(x, y + height);
+        const [x4, y4] = this.transformPoint(x + width, y + height);
+
+        const vertexIndex = batch.currentVertices;
+
+        // Add vertices
+        batch.vertexData[vertexIndex * 2 + 0] = x1;
+        batch.vertexData[vertexIndex * 2 + 1] = y1;
+        batch.vertexData[vertexIndex * 2 + 2] = x2;
+        batch.vertexData[vertexIndex * 2 + 3] = y2;
+        batch.vertexData[vertexIndex * 2 + 4] = x3;
+        batch.vertexData[vertexIndex * 2 + 5] = y3;
+        batch.vertexData[vertexIndex * 2 + 6] = x4;
+        batch.vertexData[vertexIndex * 2 + 7] = y4;
+
+        // Apply global alpha to colors
+        const finalColor = [
+            color[0],
+            color[1],
+            color[2],
+            color[3] * this.state.globalAlpha
+        ];
+
+        // Add colors for all 4 vertices
+        for (let i = 0; i < 4; i++) {
+            batch.colorData[(vertexIndex + i) * 4 + 0] = finalColor[0];
+            batch.colorData[(vertexIndex + i) * 4 + 1] = finalColor[1];
+            batch.colorData[(vertexIndex + i) * 4 + 2] = finalColor[2];
+            batch.colorData[(vertexIndex + i) * 4 + 3] = finalColor[3];
+        }
+
+        // Add indices (two triangles)
+        const indexBase = batch.currentVertices;
+        const indexOffset = batch.currentIndices;
+        batch.indexData[indexOffset + 0] = indexBase + 0;
+        batch.indexData[indexOffset + 1] = indexBase + 1;
+        batch.indexData[indexOffset + 2] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1;
+        batch.indexData[indexOffset + 4] = indexBase + 2;
+        batch.indexData[indexOffset + 5] = indexBase + 3;
+
+        batch.currentVertices += 4;
+        batch.currentIndices += 6;
+    }
+
+    /*
+     * Add circle to batch
+     */
+    addCircleToBatch(x, y, radius, color) {
+        const batch = this.batchBuffers.circles;
+
+        if (batch.currentVertices + 4 > batch.maxVertices) {
+            this.flushCircles();
+            batch.currentVertices = 0;
+            batch.currentIndices = 0;
+        }
+
+        const [cx, cy] = this.transformPoint(x, y);
+        const vertexIndex = batch.currentVertices;
+
+        // Create quad around circle
+        const vertices = [
+            [cx - radius, cy - radius],
+            [cx + radius, cy - radius],
+            [cx - radius, cy + radius],
+            [cx + radius, cy + radius]
+        ];
+
+        // Apply global alpha consistently
+        const finalColor = [
+            color[0],
+            color[1],
+            color[2],
+            color[3] * this.state.globalAlpha
+        ];
+
+        for (let i = 0; i < 4; i++) {
+            batch.vertexData[(vertexIndex + i) * 2 + 0] = vertices[i][0];
+            batch.vertexData[(vertexIndex + i) * 2 + 1] = vertices[i][1];
+
+            batch.colorData[(vertexIndex + i) * 4 + 0] = finalColor[0];
+            batch.colorData[(vertexIndex + i) * 4 + 1] = finalColor[1];
+            batch.colorData[(vertexIndex + i) * 4 + 2] = finalColor[2];
+            batch.colorData[(vertexIndex + i) * 4 + 3] = finalColor[3];
+
+            batch.centerData[(vertexIndex + i) * 2 + 0] = cx;
+            batch.centerData[(vertexIndex + i) * 2 + 1] = cy;
+
+            batch.radiusData[vertexIndex + i] = radius;
+        }
+
+        // Add indices
+        const indexBase = batch.currentVertices;
+        const indexOffset = batch.currentIndices;
+        batch.indexData[indexOffset + 0] = indexBase + 0;
+        batch.indexData[indexOffset + 1] = indexBase + 1;
+        batch.indexData[indexOffset + 2] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1;
+        batch.indexData[indexOffset + 4] = indexBase + 2;
+        batch.indexData[indexOffset + 5] = indexBase + 3;
+
+        batch.currentVertices += 4;
+        batch.currentIndices += 6;
+    }
+
+    /*
+     * Add ellipse to batch
+     */
+    addEllipseToBatch(x, y, radiusX, radiusY, color) {
+        const batch = this.batchBuffers.ellipses;
+
+        if (batch.currentVertices + 4 > batch.maxVertices) {
+            this.flushEllipses();
+            batch.currentVertices = 0;
+            batch.currentIndices = 0;
+        }
+
+        const [cx, cy] = this.transformPoint(x, y);
+        const vertexIndex = batch.currentVertices;
+
+        // Create quad around ellipse
+        const vertices = [
+            [cx - radiusX, cy - radiusY],
+            [cx + radiusX, cy - radiusY],
+            [cx - radiusX, cy + radiusY],
+            [cx + radiusX, cy + radiusY]
+        ];
+
+        // Apply global alpha consistently like other batches
+        const finalColor = [
+            color[0],
+            color[1],
+            color[2],
+            color[3] * this.state.globalAlpha
+        ];
+
+        for (let i = 0; i < 4; i++) {
+            batch.vertexData[(vertexIndex + i) * 2 + 0] = vertices[i][0];
+            batch.vertexData[(vertexIndex + i) * 2 + 1] = vertices[i][1];
+
+            batch.colorData[(vertexIndex + i) * 4 + 0] = finalColor[0];
+            batch.colorData[(vertexIndex + i) * 4 + 1] = finalColor[1];
+            batch.colorData[(vertexIndex + i) * 4 + 2] = finalColor[2];
+            batch.colorData[(vertexIndex + i) * 4 + 3] = finalColor[3];
+
+            batch.centerData[(vertexIndex + i) * 2 + 0] = cx;
+            batch.centerData[(vertexIndex + i) * 2 + 1] = cy;
+
+            batch.radiusData[(vertexIndex + i) * 2 + 0] = radiusX;
+            batch.radiusData[(vertexIndex + i) * 2 + 1] = radiusY;
+        }
+
+        // Add indices
+        const indexBase = batch.currentVertices;
+        const indexOffset = batch.currentIndices;
+        batch.indexData[indexOffset + 0] = indexBase + 0;
+        batch.indexData[indexOffset + 1] = indexBase + 1;
+        batch.indexData[indexOffset + 2] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1;
+        batch.indexData[indexOffset + 4] = indexBase + 2;
+        batch.indexData[indexOffset + 5] = indexBase + 3;
+
+        batch.currentVertices += 4;
+        batch.currentIndices += 6;
+    }
+
+    /*
+     * Add image to batch
+     */
+    addImageToBatch(texture, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight) {
+        // For now, flush immediately since we need to bind different textures
+        // TODO: Implement texture atlas for true batching
+        this.flushImages();
+
+        const batch = this.batchBuffers.images;
+        const gl = this.gl;
+
+        // Transform destination vertices
+        const [x1, y1] = this.transformPoint(dx, dy);
+        const [x2, y2] = this.transformPoint(dx + dWidth, dy);
+        const [x3, y3] = this.transformPoint(dx, dy + dHeight);
+        const [x4, y4] = this.transformPoint(dx + dWidth, dy + dHeight);
+
+        // Calculate texture coordinates
+        const imageWidth = texture.width || 1;
+        const imageHeight = texture.height || 1;
+        const u1 = sx / imageWidth;
+        const v1 = sy / imageHeight;
+        const u2 = (sx + sWidth) / imageWidth;
+        const v2 = (sy + sHeight) / imageHeight;
+
+        const vertexIndex = 0;
+
+        // Add vertices
+        batch.vertexData[0] = x1; batch.vertexData[1] = y1;
+        batch.vertexData[2] = x2; batch.vertexData[3] = y2;
+        batch.vertexData[4] = x3; batch.vertexData[5] = y3;
+        batch.vertexData[6] = x4; batch.vertexData[7] = y4;
+
+        // Add texture coordinates
+        batch.texCoordData[0] = u1; batch.texCoordData[1] = v1;
+        batch.texCoordData[2] = u2; batch.texCoordData[3] = v1;
+        batch.texCoordData[4] = u1; batch.texCoordData[5] = v2;
+        batch.texCoordData[6] = u2; batch.texCoordData[7] = v2;
+
+        // Add indices
+        batch.indexData[0] = 0; batch.indexData[1] = 1; batch.indexData[2] = 2;
+        batch.indexData[3] = 1; batch.indexData[4] = 2; batch.indexData[5] = 3;
+
+        batch.currentVertices = 4;
+        batch.currentIndices = 6;
+
+        // Render immediately
+        this.renderImageBatch(texture);
+    }
+
+    /*
+     * Render image batch
+     */
+    renderImageBatch(texture) {
+        const batch = this.batchBuffers.images;
+        if (batch.currentVertices === 0) return;
+
+        const gl = this.gl;
+        const program = this.shaders.image;
+
+        gl.useProgram(program);
+
+        // Bind texture
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(gl.getUniformLocation(program, 'u_texture'), 0);
+
+        // Upload vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Upload texture coordinate data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.texCoords);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.texCoordData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+
+        const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
+        gl.enableVertexAttribArray(texCoordLoc);
+        gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Upload index data
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.indexData.subarray(0, batch.currentIndices), gl.DYNAMIC_DRAW);
+
+        // Set uniforms
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        gl.uniform2f(resolutionLoc, this.width, this.height);
+
+        const globalAlphaLoc = gl.getUniformLocation(program, 'u_globalAlpha');
+        gl.uniform1f(globalAlphaLoc, this.state.globalAlpha);
+
+        // Draw
+        gl.drawElements(gl.TRIANGLES, batch.currentIndices, gl.UNSIGNED_SHORT, 0);
+
+        // Reset batch
+        batch.currentVertices = 0;
+        batch.currentIndices = 0;
+    }
+
+    /*
+     * Get or create texture from image
+     */
+    getOrCreateTexture(image) {
+        if (this.textureCache.has(image)) {
+            return this.textureCache.get(image);
+        }
+
+        const gl = this.gl;
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+
+        // Set texture parameters
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        if (this.state.imageSmoothingEnabled) {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        } else {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        }
+
+        // Upload image data
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+
+        this.textureCache.set(image, texture);
+        return texture;
+    }
+
+    /*
+     * Draw image
+     * @param {HTMLImageElement|HTMLCanvasElement|HTMLVideoElement} image - Image to draw
+     * @param {number} sx - Source x (optional)
+     * @param {number} sy - Source y (optional)  
+     * @param {number} sWidth - Source width (optional)
+     * @param {number} sHeight - Source height (optional)
+     * @param {number} dx - Destination x
+     * @param {number} dy - Destination y
+     * @param {number} dWidth - Destination width (optional)
+     * @param {number} dHeight - Destination height (optional)
+     */
+    drawImage(image, ...args) {
+        let sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight;
+
+        if (args.length === 2) {
+            // drawImage(image, dx, dy)
+            [dx, dy] = args;
+            sx = 0;
+            sy = 0;
+            sWidth = image.width || image.videoWidth || image.naturalWidth;
+            sHeight = image.height || image.videoHeight || image.naturalHeight;
+            dWidth = sWidth;
+            dHeight = sHeight;
+        } else if (args.length === 4) {
+            // drawImage(image, dx, dy, dWidth, dHeight)
+            [dx, dy, dWidth, dHeight] = args;
+            sx = 0;
+            sy = 0;
+            sWidth = image.width || image.videoWidth || image.naturalWidth;
+            sHeight = image.height || image.videoHeight || image.naturalHeight;
+        } else if (args.length === 8) {
+            // drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
+            [sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight] = args;
+        } else {
+            throw new Error('Invalid number of arguments for drawImage');
+        }
+
+        const texture = this.getOrCreateTexture(image);
+        this.addImageToBatch(texture, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
+    }
+
+    /*
+     * Fill ellipse
+     * @param {number} x - X coordinate of center
+     * @param {number} y - Y coordinate of center
+     * @param {number} radiusX - Horizontal radius
+     * @param {number} radiusY - Vertical radius
+     * @param {number} rotation - Rotation in radians (optional)
+     * @param {number} startAngle - Start angle in radians (optional)
+     * @param {number} endAngle - End angle in radians (optional)
+     * @param {boolean} counterclockwise - Direction (optional)
+     */
+    fillEllipse(x, y, radiusX, radiusY, rotation = 0, startAngle = 0, endAngle = 2 * Math.PI, counterclockwise = false) {
+        this.addEllipseToBatch(x, y, radiusX, radiusY, this.state.fillStyle);
+    }
+
+    /*
+     * Stroke ellipse
+     */
+    strokeEllipse(x, y, radiusX, radiusY, rotation = 0, startAngle = 0, endAngle = 2 * Math.PI, counterclockwise = false) {
+        this.addEllipseToBatch(x, y, radiusX, radiusY, this.state.strokeStyle);
+    }
 
     /*
         * Fill rectangle - adds to batch
@@ -679,62 +1576,18 @@ class WebGLCanvas {
         * @param {number} height - Height of the rectangle
     */
     strokeRect(x, y, width, height) {
-        // TODO: Implement stroke rectangle batching
-        this.addRectangleToBatch(x, y, width, height, this.state.strokeStyle);
-    }
+        const lineWidth = this.state.lineWidth;
+        const halfWidth = lineWidth / 2;
 
-    /*
-     * Add rectangle to batch
-     */
-    addRectangleToBatch(x, y, width, height, color) {
-        const batch = this.batchBuffers.rectangles;
-
-        // Check if batch is full
-        if (batch.currentVertices + 4 > batch.maxVertices) {
-            this.flushRectangles();
-            batch.currentVertices = 0;
-            batch.currentIndices = 0;
-        }
-
-        // Transform rectangle vertices
-        const [x1, y1] = this.transformPoint(x, y);
-        const [x2, y2] = this.transformPoint(x + width, y);
-        const [x3, y3] = this.transformPoint(x, y + height);
-        const [x4, y4] = this.transformPoint(x + width, y + height);
-
-        const vertexIndex = batch.currentVertices;
-        const colorIndex = batch.currentVertices;
-
-        // Add vertices
-        batch.vertexData[vertexIndex * 2 + 0] = x1;
-        batch.vertexData[vertexIndex * 2 + 1] = y1;
-        batch.vertexData[vertexIndex * 2 + 2] = x2;
-        batch.vertexData[vertexIndex * 2 + 3] = y2;
-        batch.vertexData[vertexIndex * 2 + 4] = x3;
-        batch.vertexData[vertexIndex * 2 + 5] = y3;
-        batch.vertexData[vertexIndex * 2 + 6] = x4;
-        batch.vertexData[vertexIndex * 2 + 7] = y4;
-
-        // Add colors for all 4 vertices
-        for (let i = 0; i < 4; i++) {
-            batch.colorData[(colorIndex + i) * 4 + 0] = color[0];
-            batch.colorData[(colorIndex + i) * 4 + 1] = color[1];
-            batch.colorData[(colorIndex + i) * 4 + 2] = color[2];
-            batch.colorData[(colorIndex + i) * 4 + 3] = color[3];
-        }
-
-        // Add indices (two triangles)
-        const indexBase = batch.currentVertices;
-        const indexOffset = batch.currentIndices;
-        batch.indexData[indexOffset + 0] = indexBase + 0;
-        batch.indexData[indexOffset + 1] = indexBase + 1;
-        batch.indexData[indexOffset + 2] = indexBase + 2;
-        batch.indexData[indexOffset + 3] = indexBase + 1;
-        batch.indexData[indexOffset + 4] = indexBase + 2;
-        batch.indexData[indexOffset + 5] = indexBase + 3;
-
-        batch.currentVertices += 4;
-        batch.currentIndices += 6;
+        // Draw four rectangles to form the stroke
+        // Top
+        this.addRectangleToBatch(x - halfWidth, y - halfWidth, width + lineWidth, lineWidth, this.state.strokeStyle);
+        // Bottom  
+        this.addRectangleToBatch(x - halfWidth, y + height - halfWidth, width + lineWidth, lineWidth, this.state.strokeStyle);
+        // Left
+        this.addRectangleToBatch(x - halfWidth, y + halfWidth, lineWidth, height - lineWidth, this.state.strokeStyle);
+        // Right
+        this.addRectangleToBatch(x + width - halfWidth, y + halfWidth, lineWidth, height - lineWidth, this.state.strokeStyle);
     }
 
     /*
@@ -756,66 +1609,6 @@ class WebGLCanvas {
     strokeCircle(x, y, radius) {
         // TODO: Implement stroke circle batching
         this.addCircleToBatch(x, y, radius, this.state.strokeStyle);
-    }
-
-    /*
-     * Add circle to batch
-     */
-    addCircleToBatch(x, y, radius, color) {
-        const batch = this.batchBuffers.circles;
-
-        // Check if batch is full
-        if (batch.currentVertices + 4 > batch.maxVertices) {
-            this.flushCircles();
-            batch.currentVertices = 0;
-            batch.currentIndices = 0;
-        }
-
-        // Transform circle center (but not the radius)
-        const [cx, cy] = this.transformPoint(x, y);
-
-        // Create a quad around the circle center
-        const vertexIndex = batch.currentVertices;
-
-        // Quad vertices (relative to center)
-        const vertices = [
-            [cx - radius, cy - radius], // bottom-left
-            [cx + radius, cy - radius], // bottom-right
-            [cx - radius, cy + radius], // top-left
-            [cx + radius, cy + radius]  // top-right
-        ];
-
-        // Add vertices
-        for (let i = 0; i < 4; i++) {
-            batch.vertexData[(vertexIndex + i) * 2 + 0] = vertices[i][0];
-            batch.vertexData[(vertexIndex + i) * 2 + 1] = vertices[i][1];
-
-            // Color for each vertex
-            batch.colorData[(vertexIndex + i) * 4 + 0] = color[0];
-            batch.colorData[(vertexIndex + i) * 4 + 1] = color[1];
-            batch.colorData[(vertexIndex + i) * 4 + 2] = color[2];
-            batch.colorData[(vertexIndex + i) * 4 + 3] = color[3];
-
-            // Center for each vertex
-            batch.centerData[(vertexIndex + i) * 2 + 0] = cx;
-            batch.centerData[(vertexIndex + i) * 2 + 1] = cy;
-
-            // Radius for each vertex
-            batch.radiusData[vertexIndex + i] = radius;
-        }
-
-        // Add indices (two triangles)
-        const indexBase = batch.currentVertices;
-        const indexOffset = batch.currentIndices;
-        batch.indexData[indexOffset + 0] = indexBase + 0;
-        batch.indexData[indexOffset + 1] = indexBase + 1;
-        batch.indexData[indexOffset + 2] = indexBase + 2;
-        batch.indexData[indexOffset + 3] = indexBase + 1;
-        batch.indexData[indexOffset + 4] = indexBase + 2;
-        batch.indexData[indexOffset + 5] = indexBase + 3;
-
-        batch.currentVertices += 4;
-        batch.currentIndices += 6;
     }
 
     /*
@@ -841,21 +1634,637 @@ class WebGLCanvas {
         const vertexIndex = batch.currentVertices;
         const color = this.state.strokeStyle;
 
+        // Apply global alpha to line colors
+        const finalColor = [
+            color[0],
+            color[1],
+            color[2],
+            color[3] * this.state.globalAlpha
+        ];
+
         // Add vertices
         batch.vertexData[vertexIndex * 2 + 0] = tx1;
         batch.vertexData[vertexIndex * 2 + 1] = ty1;
         batch.vertexData[vertexIndex * 2 + 2] = tx2;
         batch.vertexData[vertexIndex * 2 + 3] = ty2;
 
-        // Add colors
+        // Add colors with global alpha
         for (let i = 0; i < 2; i++) {
-            batch.colorData[(vertexIndex + i) * 4 + 0] = color[0];
-            batch.colorData[(vertexIndex + i) * 4 + 1] = color[1];
-            batch.colorData[(vertexIndex + i) * 4 + 2] = color[2];
-            batch.colorData[(vertexIndex + i) * 4 + 3] = color[3];
+            batch.colorData[(vertexIndex + i) * 4 + 0] = finalColor[0];
+            batch.colorData[(vertexIndex + i) * 4 + 1] = finalColor[1];
+            batch.colorData[(vertexIndex + i) * 4 + 2] = finalColor[2];
+            batch.colorData[(vertexIndex + i) * 4 + 3] = finalColor[3];
         }
 
         batch.currentVertices += 2;
+    }
+
+    /*
+    * Set line dash pattern
+    * @param {Array} segments - Array of line and gap lengths
+    */
+    setLineDash(segments) {
+        this.state.lineDash = [...segments];
+    }
+
+    /*
+    * Get current line dash pattern
+    * @return {Array} - Current dash pattern
+    */
+    getLineDash() {
+        return [...this.state.lineDash];
+    }
+
+    /*
+    * Set line dash offset
+    * @param {number} offset - Dash offset
+    */
+    set lineDashOffset(offset) {
+        this.state.lineDashOffset = offset;
+    }
+
+    get lineDashOffset() {
+        return this.state.lineDashOffset;
+    }
+
+    /*
+     * Begin a new path
+     */
+    beginPath() {
+        this.currentPath = [];
+    }
+
+    /*
+     * Close the current path
+     */
+    closePath() {
+        if (this.currentPath.length > 0) {
+            this.currentPath.push({ type: 'close' });
+        }
+    }
+
+    /*
+     * Move to point without drawing
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     */
+    moveTo(x, y) {
+        this.currentPath.push({ type: 'moveTo', x, y });
+        this.pathStartX = x;
+        this.pathStartY = y;
+        this.currentX = x;
+        this.currentY = y;
+    }
+
+    /*
+     * Draw line to point
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     */
+    lineTo(x, y) {
+        this.currentPath.push({ type: 'lineTo', x, y });
+        this.currentX = x;
+        this.currentY = y;
+    }
+
+    /*
+     * Draw quadratic curve
+     * @param {number} cpx - Control point X
+     * @param {number} cpy - Control point Y
+     * @param {number} x - End point X
+     * @param {number} y - End point Y
+     */
+    quadraticCurveTo(cpx, cpy, x, y) {
+        this.currentPath.push({ type: 'quadraticCurveTo', cpx, cpy, x, y });
+        this.currentX = x;
+        this.currentY = y;
+    }
+
+    /*
+     * Draw bezier curve
+     * @param {number} cp1x - Control point 1 X
+     * @param {number} cp1y - Control point 1 Y
+     * @param {number} cp2x - Control point 2 X
+     * @param {number} cp2y - Control point 2 Y
+     * @param {number} x - End point X
+     * @param {number} y - End point Y
+     */
+    bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
+        this.currentPath.push({ type: 'bezierCurveTo', cp1x, cp1y, cp2x, cp2y, x, y });
+        this.currentX = x;
+        this.currentY = y;
+    }
+
+    /*
+     * Draw arc
+     * @param {number} x - Center X
+     * @param {number} y - Center Y
+     * @param {number} radius - Arc radius
+     * @param {number} startAngle - Start angle in radians
+     * @param {number} endAngle - End angle in radians
+     * @param {boolean} counterclockwise - Direction
+     */
+    arc(x, y, radius, startAngle, endAngle, counterclockwise = false) {
+        this.currentPath.push({ type: 'arc', x, y, radius, startAngle, endAngle, counterclockwise });
+
+        // Update current position to end of arc
+        this.currentX = x + Math.cos(endAngle) * radius;
+        this.currentY = y + Math.sin(endAngle) * radius;
+    }
+
+    /*
+     * Draw arc between two points
+     * @param {number} x1 - First point X
+     * @param {number} y1 - First point Y
+     * @param {number} x2 - Second point X
+     * @param {number} y2 - Second point Y
+     * @param {number} radius - Arc radius
+     */
+    arcTo(x1, y1, x2, y2, radius) {
+        this.currentPath.push({ type: 'arcTo', x1, y1, x2, y2, radius });
+        this.currentX = x2;
+        this.currentY = y2;
+    }
+
+    /*
+     * Add rectangle to path
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @param {number} width - Width
+     * @param {number} height - Height
+     */
+    rect(x, y, width, height) {
+        this.moveTo(x, y);
+        this.lineTo(x + width, y);
+        this.lineTo(x + width, y + height);
+        this.lineTo(x, y + height);
+        this.closePath();
+    }
+
+    /*
+     * Fill the current path
+     */
+    fill() {
+        this.renderPath(true);
+    }
+
+    /*
+     * Stroke the current path
+     */
+    stroke() {
+        this.renderPath(false);
+    }
+
+    /*
+     * Render the current path
+     * @param {boolean} fill - Whether to fill (true) or stroke (false)
+     */
+    renderPath(fill) {
+        if (this.currentPath.length === 0) return;
+
+        // Convert path to line segments for rendering
+        const segments = this.pathToSegments(this.currentPath);
+
+        for (const segment of segments) {
+            if (fill) {
+                // For filling, we'd need to triangulate the path
+                // For now, just draw lines
+                this.drawLine(segment.x1, segment.y1, segment.x2, segment.y2);
+            } else {
+                this.drawLine(segment.x1, segment.y1, segment.x2, segment.y2);
+            }
+        }
+    }
+
+    /*
+     * Convert path to line segments
+     * @param {Array} path - Path commands
+     * @return {Array} - Array of line segments
+     */
+    pathToSegments(path) {
+        const segments = [];
+        let currentX = 0, currentY = 0;
+        let startX = 0, startY = 0;
+
+        for (const command of path) {
+            switch (command.type) {
+                case 'moveTo':
+                    currentX = command.x;
+                    currentY = command.y;
+                    startX = command.x;
+                    startY = command.y;
+                    break;
+
+                case 'lineTo':
+                    segments.push({
+                        x1: currentX, y1: currentY,
+                        x2: command.x, y2: command.y
+                    });
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'quadraticCurveTo':
+                    // Approximate with line segments
+                    const quadSegments = this.approximateQuadratic(
+                        currentX, currentY,
+                        command.cpx, command.cpy,
+                        command.x, command.y,
+                        10 // number of segments
+                    );
+                    segments.push(...quadSegments);
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'bezierCurveTo':
+                    // Approximate with line segments
+                    const bezierSegments = this.approximateBezier(
+                        currentX, currentY,
+                        command.cp1x, command.cp1y,
+                        command.cp2x, command.cp2y,
+                        command.x, command.y,
+                        10 // number of segments
+                    );
+                    segments.push(...bezierSegments);
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'arc':
+                    const arcSegments = this.approximateArc(
+                        command.x, command.y,
+                        command.radius,
+                        command.startAngle,
+                        command.endAngle,
+                        command.counterclockwise,
+                        20 // number of segments
+                    );
+                    if (arcSegments.length > 0) {
+                        // Connect to start of arc
+                        const firstPoint = arcSegments[0];
+                        segments.push({
+                            x1: currentX, y1: currentY,
+                            x2: firstPoint.x1, y2: firstPoint.y1
+                        });
+                        segments.push(...arcSegments);
+                        const lastPoint = arcSegments[arcSegments.length - 1];
+                        currentX = lastPoint.x2;
+                        currentY = lastPoint.y2;
+                    }
+                    break;
+
+                case 'close':
+                    segments.push({
+                        x1: currentX, y1: currentY,
+                        x2: startX, y2: startY
+                    });
+                    currentX = startX;
+                    currentY = startY;
+                    break;
+            }
+        }
+
+        return segments;
+    }
+
+    /*
+     * Approximate quadratic curve with line segments
+     */
+    approximateQuadratic(x0, y0, cx, cy, x1, y1, segments) {
+        const result = [];
+        for (let i = 0; i < segments; i++) {
+            const t1 = i / segments;
+            const t2 = (i + 1) / segments;
+
+            const p1 = this.quadraticBezier(x0, y0, cx, cy, x1, y1, t1);
+            const p2 = this.quadraticBezier(x0, y0, cx, cy, x1, y1, t2);
+
+            result.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+        }
+        return result;
+    }
+
+    /*
+     * Approximate cubic bezier curve with line segments
+     */
+    approximateBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, segments) {
+        const result = [];
+        for (let i = 0; i < segments; i++) {
+            const t1 = i / segments;
+            const t2 = (i + 1) / segments;
+
+            const p1 = this.cubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t1);
+            const p2 = this.cubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t2);
+
+            result.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+        }
+        return result;
+    }
+
+    /*
+     * Approximate arc with line segments
+     */
+    approximateArc(cx, cy, radius, startAngle, endAngle, counterclockwise, segments) {
+        const result = [];
+
+        let totalAngle = endAngle - startAngle;
+        if (counterclockwise) {
+            if (totalAngle > 0) totalAngle -= 2 * Math.PI;
+        } else {
+            if (totalAngle < 0) totalAngle += 2 * Math.PI;
+        }
+
+        const angleStep = totalAngle / segments;
+
+        for (let i = 0; i < segments; i++) {
+            const angle1 = startAngle + angleStep * i;
+            const angle2 = startAngle + angleStep * (i + 1);
+
+            const x1 = cx + Math.cos(angle1) * radius;
+            const y1 = cy + Math.sin(angle1) * radius;
+            const x2 = cx + Math.cos(angle2) * radius;
+            const y2 = cy + Math.sin(angle2) * radius;
+
+            result.push({ x1, y1, x2, y2 });
+        }
+
+        return result;
+    }
+
+    /*
+     * Calculate point on quadratic bezier curve
+     */
+    quadraticBezier(x0, y0, cx, cy, x1, y1, t) {
+        const u = 1 - t;
+        const x = u * u * x0 + 2 * u * t * cx + t * t * x1;
+        const y = u * u * y0 + 2 * u * t * cy + t * t * y1;
+        return { x, y };
+    }
+
+    /*
+     * Calculate point on cubic bezier curve
+     */
+    cubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t) {
+        const u = 1 - t;
+        const x = u * u * u * x0 + 3 * u * u * t * cx1 + 3 * u * t * t * cx2 + t * t * t * x1;
+        const y = u * u * u * y0 + 3 * u * u * t * cy1 + 3 * u * t * t * cy2 + t * t * t * y1;
+        return { x, y };
+    }
+
+    /*
+     * Fill text (basic implementation)
+     * @param {string} text - Text to draw
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @param {number} maxWidth - Maximum width (optional)
+     */
+    fillText(text, x, y, maxWidth) {
+        this.renderText(text, x, y, maxWidth, true);
+    }
+
+    /*
+     * Stroke text (basic implementation)
+     * @param {string} text - Text to draw
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @param {number} maxWidth - Maximum width (optional)
+     */
+    strokeText(text, x, y, maxWidth) {
+        this.renderText(text, x, y, maxWidth, false);
+    }
+
+    /*
+    * Create or get cached font canvas for text rendering
+    */
+    getFontCanvas(font) {
+        if (!this.fontCanvas) {
+            this.fontCanvas = document.createElement('canvas');
+            this.fontCtx = this.fontCanvas.getContext('2d');
+        }
+
+        // Set font on the 2D context
+        this.fontCtx.font = font;
+        return { canvas: this.fontCanvas, ctx: this.fontCtx };
+    }
+
+    /*
+ * Render text to texture and draw
+ */
+    renderText(text, x, y, maxWidth, fill = true) {
+        const { canvas, ctx } = this.getFontCanvas(this.state.font);
+
+        // Measure text
+        const metrics = ctx.measureText(text);
+        let textWidth = metrics.width;
+
+        // Handle max width
+        if (maxWidth && textWidth > maxWidth) {
+            const scale = maxWidth / textWidth;
+            textWidth = maxWidth;
+        }
+
+        const textHeight = Math.abs(metrics.actualBoundingBoxAscent) + Math.abs(metrics.actualBoundingBoxDescent);
+
+        // Resize canvas to fit text with some padding
+        const padding = 4;
+        canvas.width = Math.ceil(textWidth) + padding * 2;
+        canvas.height = Math.ceil(textHeight) + padding * 2;
+
+        // Reset context after resize
+        ctx.font = this.state.font;
+        ctx.textAlign = this.state.textAlign;
+        ctx.textBaseline = this.state.textBaseline;
+
+        // Set up rendering
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (fill) {
+            const color = this.state.fillStyle;
+            ctx.fillStyle = `rgba(${Math.floor(color[0] * 255)}, ${Math.floor(color[1] * 255)}, ${Math.floor(color[2] * 255)}, ${color[3] * this.state.globalAlpha})`;
+            ctx.fillText(text, padding, padding + Math.abs(metrics.actualBoundingBoxAscent));
+        } else {
+            const color = this.state.strokeStyle;
+            ctx.strokeStyle = `rgba(${Math.floor(color[0] * 255)}, ${Math.floor(color[1] * 255)}, ${Math.floor(color[2] * 255)}, ${color[3] * this.state.globalAlpha})`;
+            ctx.lineWidth = this.state.lineWidth;
+            ctx.strokeText(text, padding, padding + Math.abs(metrics.actualBoundingBoxAscent));
+        }
+
+        // Calculate final position based on text alignment
+        let finalX = x;
+        let finalY = y;
+
+        // Adjust for text alignment
+        switch (this.state.textAlign) {
+            case 'center':
+                finalX -= textWidth / 2;
+                break;
+            case 'right':
+            case 'end':
+                finalX -= textWidth;
+                break;
+        }
+
+        // Adjust for text baseline
+        switch (this.state.textBaseline) {
+            case 'top':
+                finalY -= Math.abs(metrics.actualBoundingBoxAscent);
+                break;
+            case 'middle':
+                finalY -= textHeight / 2;
+                break;
+            case 'bottom':
+                finalY += Math.abs(metrics.actualBoundingBoxDescent);
+                break;
+        }
+
+        // Draw the text canvas as an image
+        this.drawImage(canvas, finalX - padding, finalY - padding);
+    }
+
+    /*
+     * Measure text width
+     * @param {string} text - Text to measure
+     * @return {object} - Text metrics
+     */
+    measureText(text) {
+        const { ctx } = this.getFontCanvas(this.state.font);
+        ctx.font = this.state.font;
+        ctx.textAlign = this.state.textAlign;
+        ctx.textBaseline = this.state.textBaseline;
+        return ctx.measureText(text);
+    }
+
+    /*
+     * Create linear gradient
+     * @param {number} x0 - Start x
+     * @param {number} y0 - Start y
+     * @param {number} x1 - End x
+     * @param {number} y1 - End y
+     * @return {object} - Gradient object
+     */
+    createLinearGradient(x0, y0, x1, y1) {
+        return {
+            type: 'linear',
+            x0, y0, x1, y1,
+            colorStops: []
+        };
+    }
+
+    /*
+     * Create radial gradient
+     * @param {number} x0 - Start center x
+     * @param {number} y0 - Start center y
+     * @param {number} r0 - Start radius
+     * @param {number} x1 - End center x
+     * @param {number} y1 - End center y
+     * @param {number} r1 - End radius
+     * @return {object} - Gradient object
+     */
+    createRadialGradient(x0, y0, r0, x1, y1, r1) {
+        return {
+            type: 'radial',
+            x0, y0, r0, x1, y1, r1,
+            colorStops: []
+        };
+    }
+
+    /*
+     * Create pattern
+     * @param {HTMLImageElement|HTMLCanvasElement|HTMLVideoElement} image - Image for pattern
+     * @param {string} repetition - 'repeat', 'repeat-x', 'repeat-y', 'no-repeat'
+     * @return {object} - Pattern object
+     */
+    createPattern(image, repetition) {
+        return {
+            type: 'pattern',
+            image,
+            repetition
+        };
+    }
+
+    /*
+     * Put image data
+     * @param {ImageData} imageData - Image data to put
+     * @param {number} dx - Destination x
+     * @param {number} dy - Destination y
+     */
+    putImageData(imageData, dx, dy) {
+        // Create a temporary canvas to draw the image data
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = imageData.width;
+        tempCanvas.height = imageData.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.putImageData(imageData, 0, 0);
+
+        this.drawImage(tempCanvas, dx, dy);
+    }
+
+    /*
+     * Get image data
+     * @param {number} sx - Source x
+     * @param {number} sy - Source y
+     * @param {number} sw - Source width
+     * @param {number} sh - Source height
+     * @return {ImageData} - Image data
+     */
+    getImageData(sx, sy, sw, sh) {
+        // This would require reading from the WebGL framebuffer
+        // For now, return empty image data
+        console.warn('getImageData is not fully implemented in this WebGL canvas');
+        return new ImageData(sw, sh);
+    }
+
+    /*
+     * Create image data
+     * @param {number} width - Width
+     * @param {number} height - Height
+     * @return {ImageData} - New image data
+     */
+    createImageData(width, height) {
+        return new ImageData(width, height);
+    }
+
+    /*
+    * Set transform matrix directly
+    * @param {number} a - Horizontal scaling
+    * @param {number} b - Horizontal skewing
+    * @param {number} c - Vertical skewing
+    * @param {number} d - Vertical scaling
+    * @param {number} e - Horizontal translation
+    * @param {number} f - Vertical translation
+    */
+    setTransform(a, b, c, d, e, f) {
+        this.state.transform = [
+            a, c, e,
+            b, d, f,
+            0, 0, 1
+        ];
+    }
+
+    /*
+    * Transform matrix multiplication
+    * @param {number} a - Horizontal scaling
+    * @param {number} b - Horizontal skewing
+    * @param {number} c - Vertical skewing
+    * @param {number} d - Vertical scaling
+    * @param {number} e - Horizontal translation
+    * @param {number} f - Vertical translation
+    */
+    transform(a, b, c, d, e, f) {
+        const transformMatrix = [
+            a, c, e,
+            b, d, f,
+            0, 0, 1
+        ];
+        this.state.transform = this.multiplyMatrix(this.state.transform, transformMatrix);
+    }
+
+    /*
+    * Reset transform to identity matrix
+    */
+    resetTransform() {
+        this.state.transform = this.createIdentityMatrix();
     }
 
     /*
@@ -902,6 +2311,25 @@ class WebGLCanvas {
             0, 0, 1
         ];
         this.state.transform = this.multiplyMatrix(this.state.transform, scaleMatrix);
+    }
+
+    /*
+    * Create clipping region from current path
+    */
+    clip() {
+        // For now, store the current path as a clipping region
+        // Full implementation would require stencil buffer or scissor test
+        if (this.currentPath.length > 0) {
+            this.state.clipPath = [...this.currentPath];
+            console.warn('clip() is partially implemented - full clipping requires stencil buffer');
+        }
+    }
+
+    /*
+    * Clear the current clipping region
+    */
+    resetClip() {
+        this.state.clipPath = null;
     }
 
     /*
