@@ -399,14 +399,29 @@
 
                 initCanvas() {
                     try {
+                        // Dispose of existing context if it exists
+                        if (this.ctx && typeof this.ctx.dispose === 'function') {
+                            this.ctx.dispose();
+                        }
+
                         // Check if WebGLCanvas is available, fallback to 2D context
                         if (typeof WebGLCanvas !== 'undefined') {
                             this.ctx = new WebGLCanvas(this.canvas);
-                            console.log('WebGL context initialized');
+                            // Clear to black background
+                            this.ctx.setClearColor('#000000');
+                            this.ctx.clear();
+                            console.log('WebGL context initialized and cleared');
                         } else {
                             console.log('WebGLCanvas not available, using 2D context');
                             this.ctx = this.canvas.getContext('2d');
+                            if (this.ctx) {
+                                // Clear and set black background
+                                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                                this.ctx.fillStyle = 'black';
+                                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                            }
                         }
+
                         this.hideError();
                         console.log('Canvas initialized:', this.canvas, this.ctx);
                     } catch (error) {
@@ -617,9 +632,6 @@ if (ctx.flush) ctx.flush();`;
                             this.animationId = null;
                         }
 
-                        // Reset canvas state completely
-                        this.resetCanvas();
-
                         // Get code from CodeMirror or textarea
                         const code = this.codeMirror ? this.codeMirror.getValue() : this.editor.value;
 
@@ -628,11 +640,19 @@ if (ctx.flush) ctx.flush();`;
                             return;
                         }
 
+                        // Reset canvas state completely BEFORE running new code
+                        this.resetCanvas();
+
                         console.log('Executing code:', code.substring(0, 100) + '...');
 
                         // Create function with access to canvas and context
                         const executeCode = new Function('canvas', 'WebGLCanvas', code);
                         executeCode(this.canvas, window.WebGLCanvas);
+
+                        // If using WebGL Canvas, flush any pending rendering
+                        if (this.ctx && typeof this.ctx.flush === 'function') {
+                            this.ctx.flush();
+                        }
 
                         this.hideError();
                         this.startFPSCounter();
@@ -645,38 +665,42 @@ if (ctx.flush) ctx.flush();`;
 
                 resetCanvas() {
                     try {
-                        // If we have a WebGL context, clean it up properly
+                        // Cancel any running animation loops
+                        if (this.animationId) {
+                            cancelAnimationFrame(this.animationId);
+                            this.animationId = null;
+                        }
+
+                        // Dispose of existing WebGL context
                         if (this.ctx && typeof this.ctx.dispose === 'function') {
-                            this.ctx.dispose(); // Clean up shaders, buffers, etc.
+                            this.ctx.dispose();
                         }
 
-                        // Clear the canvas completely
-                        const gl = this.canvas.getContext('webgl2') || this.canvas.getContext('webgl');
-                        if (gl) {
-                            // Clear all WebGL state
-                            gl.useProgram(null);
-                            gl.bindBuffer(gl.ARRAY_BUFFER, null);
-                            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
-                            gl.bindTexture(gl.TEXTURE_2D, null);
-                            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+                        // Create a completely new canvas element
+                        const oldCanvas = this.canvas;
+                        const newCanvas = document.createElement('canvas');
 
-                            // Reset viewport
-                            gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-                        } else {
-                            // For 2D context, just clear the canvas
-                            const ctx2d = this.canvas.getContext('2d');
-                            if (ctx2d) {
-                                ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
-                                ctx2d.resetTransform();
-                            }
-                        }
+                        // Copy attributes from old canvas
+                        newCanvas.id = 'playground-canvas';
+                        newCanvas.width = oldCanvas.width;
+                        newCanvas.height = oldCanvas.height;
+                        newCanvas.tabIndex = 1;
+                        newCanvas.className = oldCanvas.className;
 
-                        // Reinitialize the context
+                        // Replace the old canvas
+                        oldCanvas.parentNode.replaceChild(newCanvas, oldCanvas);
+                        this.canvas = newCanvas;
+
+                        // Set up click handler for new canvas
+                        this.canvas.addEventListener('click', () => {
+                            this.canvas.focus();
+                        });
+
+                        // Initialize new context
                         this.initCanvas();
 
                     } catch (error) {
                         console.error('Error resetting canvas:', error);
-                        // Force reinitialize on error
                         this.initCanvas();
                     }
                 }

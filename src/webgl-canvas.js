@@ -2708,6 +2708,89 @@ class WebGLCanvas {
         return true;
     }
 
+    /**
+ * Dispose of all WebGL resources and clean up
+ * Call this when you're done with the canvas to prevent memory leaks
+ */
+    dispose() {
+        if (!this.gl) return; // Already disposed
+
+        // Cancel any running animation frames
+        if (this.animationId) {
+            cancelAnimationFrame(this.animationId);
+            this.animationId = null;
+        }
+
+        // Clean up batch buffers
+        Object.values(this.batchBuffers).forEach(batch => {
+            if (batch.vertices) this.gl.deleteBuffer(batch.vertices);
+            if (batch.colors) this.gl.deleteBuffer(batch.colors);
+            if (batch.indices) this.gl.deleteBuffer(batch.indices);
+            if (batch.centers) this.gl.deleteBuffer(batch.centers);
+            if (batch.radii) this.gl.deleteBuffer(batch.radii);
+            if (batch.texCoords) this.gl.deleteBuffer(batch.texCoords);
+        });
+
+        // Clean up custom buffers
+        if (this.customVertexBuffer) {
+            this.gl.deleteBuffer(this.customVertexBuffer);
+            this.customVertexBuffer = null;
+        }
+        if (this.customIndexBuffer) {
+            this.gl.deleteBuffer(this.customIndexBuffer);
+            this.customIndexBuffer = null;
+        }
+
+        // Clean up shaders
+        Object.values(this.shaders).forEach(shader => {
+            if (shader) this.gl.deleteProgram(shader);
+        });
+
+        // Clean up textures
+        this.textureCache.forEach((texture) => {
+            this.gl.deleteTexture(texture);
+        });
+        this.textureCache.clear();
+
+        // Clean up font cache
+        this.fontCache.clear();
+
+        // Clear all batch arrays
+        this.batches = {
+            rectangles: [],
+            circles: [],
+            ellipses: [],
+            lines: [],
+            images: [],
+            text: []
+        };
+
+        // Reset batch buffers
+        this.batchBuffers = {};
+
+        // Clear paths and state
+        this.currentPath = [];
+        this.stateStack = [];
+
+        // Remove fullscreen elements and handlers
+        this.cleanup();
+
+        // Force WebGL context loss to fully reset
+        const extension = this.gl.getExtension('WEBGL_lose_context');
+        if (extension) {
+            extension.loseContext();
+        }
+
+        // Clear references
+        this.gl = null;
+        this.canvas = null;
+        this.ctx = null;
+        this.shaders = {};
+        this.state = null;
+
+        console.log('WebGLCanvas disposed successfully');
+    }
+
     /*
         * Resize the canvas
         * Updates the canvas size and WebGL viewport

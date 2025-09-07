@@ -6,6 +6,48 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebGL Canvas - GPU-Powered 2D Graphics</title>
     <style>
+        :root {
+            /* Color Variables - Iron Man Theme */
+            --primary-bg: linear-gradient(135deg, #330f0f 0%, #421a1a 100%);
+            --hero-bg: linear-gradient(135deg, #8B0000 0%, #CD853F 100%);
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.9);
+            --text-muted: rgba(255, 215, 0, 0.8);
+            --accent-primary: #DC143C;
+            --accent-secondary: #B8860B;
+            --accent-tertiary: #FFD700;
+            --surface-primary: rgb(26, 15, 15);
+            --surface-secondary: rgb(139, 0, 0);
+            --surface-tertiary: rgba(205, 133, 63, 0.3);
+            --border-primary: rgba(220, 20, 60, 0.3);
+            --border-secondary: rgba(255, 215, 0, 0.3);
+            --border-active: rgba(255, 215, 0, 0.8);
+            --shadow-primary: rgba(0, 0, 0, 0.5);
+            --shadow-accent: rgba(220, 20, 60, 0.4);
+            --button-gradient: linear-gradient(45deg, #DC143C, #FFD700);
+            --button-shadow: rgba(220, 20, 60, 0.4);
+            --button-hover-shadow: rgba(255, 215, 0, 0.5);
+            --playground-gradient: linear-gradient(45deg, #B8860B, #FFD700);
+            --playground-shadow: rgba(184, 134, 11, 0.6);
+            --grid-pattern-opacity: 0.2;
+            --fps-counter-bg: rgba(0, 0, 0, 0.9);
+            --fps-counter-color: #FFD700;
+            --fps-counter-border: rgba(255, 215, 0, 0.4);
+            --performance-warning-bg: rgba(255, 215, 0, 0.1);
+            --performance-warning-border: rgba(255, 215, 0, 0.4);
+            --performance-warning-color: #FFD700;
+            --game-over-bg: rgba(0, 0, 0, 0.95);
+            --game-over-border: #DC143C;
+            --game-over-color: #DC143C;
+            --code-bg: #1a1a1a;
+            --code-border: rgba(220, 20, 60, 0.2);
+            --code-highlight: #FFD700;
+            --code-string: #DC143C;
+            --code-comment: #B8860B;
+            --key-bg: rgba(220, 20, 60, 0.2);
+            --key-border: rgba(255, 215, 0, 0.3);
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -14,15 +56,15 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: #ffffff;
+            background: var(--primary-bg);
+            color: var(--text-primary);
             min-height: 100vh;
             overflow-x: hidden;
         }
 
         .hero {
             position: relative;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--hero-bg);
             padding: 80px 20px;
             text-align: center;
             overflow: hidden;
@@ -36,7 +78,7 @@
             right: 0;
             bottom: 0;
             background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
-            opacity: 0.3;
+            opacity: var(--grid-pattern-opacity);
         }
 
         .hero-content {
@@ -46,12 +88,20 @@
             margin: 0 auto;
         }
 
+        .hero-title img {
+            max-width: 50%;
+            height: auto;
+            display: block;
+            margin: 0 auto 20px;
+            filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+        }
+
         .hero h1 {
             font-size: 3.5rem;
             font-weight: 800;
             margin-bottom: 20px;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-            background: linear-gradient(45deg, #ffffff, #f0f0f0);
+            background: linear-gradient(45deg, #ffffff, #f5e6e6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -64,6 +114,7 @@
             max-width: 600px;
             margin-left: auto;
             margin-right: auto;
+            color: var(--text-secondary);
         }
 
         .features {
@@ -77,17 +128,17 @@
         }
 
         .feature {
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--surface-secondary);
             padding: 20px;
             border-radius: 12px;
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid var(--surface-tertiary);
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
 
         .feature:hover {
             transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 10px 30px var(--shadow-accent);
         }
 
         .feature-icon {
@@ -104,18 +155,18 @@
         .section {
             margin: 60px 0;
             padding: 40px;
-            background: rgba(0, 0, 0, 0.2);
+            background: var(--surface-primary);
             border-radius: 16px;
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-primary);
+            box-shadow: 0 8px 32px var(--shadow-primary);
         }
 
         .section h2 {
             font-size: 2.2rem;
             margin-bottom: 20px;
             text-align: center;
-            color: #ffffff;
+            color: var(--text-primary);
             position: relative;
         }
 
@@ -127,12 +178,12 @@
             transform: translateX(-50%);
             width: 60px;
             height: 3px;
-            background: linear-gradient(45deg, #667eea, #764ba2);
+            background: var(--button-gradient);
             border-radius: 2px;
         }
 
         canvas {
-            border: 2px solid rgba(255, 255, 255, 0.2);
+            border: 2px solid var(--border-secondary);
             border-radius: 12px;
             display: block;
             margin: 30px auto;
@@ -142,21 +193,20 @@
             outline: none;
             cursor: pointer;
             position: relative;
-            /* Add this to fix FPS counter positioning */
         }
 
         canvas:hover {
-            box-shadow: 0 12px 40px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 12px 40px var(--shadow-accent);
         }
 
         canvas:focus {
-            border-color: rgba(102, 126, 234, 0.8);
-            box-shadow: 0 12px 40px rgba(102, 126, 234, 0.5);
+            border-color: var(--border-active);
+            box-shadow: 0 12px 40px var(--button-hover-shadow);
         }
 
         canvas.game-active {
-            border-color: rgba(0, 255, 136, 0.8);
-            box-shadow: 0 12px 40px rgba(0, 255, 136, 0.4);
+            border-color: var(--accent-secondary);
+            box-shadow: 0 12px 40px rgba(139, 58, 58, 0.4);
         }
 
         .controls {
@@ -170,7 +220,7 @@
 
         button {
             padding: 12px 24px;
-            background: linear-gradient(45deg, #667eea, #764ba2);
+            background: var(--button-gradient);
             color: white;
             border: none;
             border-radius: 8px;
@@ -178,7 +228,7 @@
             font-size: 14px;
             font-weight: 600;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 4px 15px var(--button-shadow);
             position: relative;
             overflow: hidden;
         }
@@ -200,7 +250,7 @@
 
         button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 6px 20px var(--button-hover-shadow);
         }
 
         button:active {
@@ -208,8 +258,8 @@
         }
 
         .code-example {
-            background: #1a1a1a;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: var(--code-bg);
+            border: 1px solid var(--code-border);
             border-radius: 12px;
             padding: 25px;
             font-family: 'Courier New', 'Monaco', monospace;
@@ -231,29 +281,29 @@
         }
 
         .highlight {
-            color: #569cd6;
+            color: var(--code-highlight);
         }
 
         .string {
-            color: #ce9178;
+            color: var(--code-string);
         }
 
         .comment {
-            color: #6a9955;
+            color: var(--code-comment);
         }
 
         .fps-counter {
             position: absolute;
             top: 10px;
             right: 10px;
-            background: rgba(0, 0, 0, 0.8);
-            color: #00ff00;
+            background: var(--fps-counter-bg);
+            color: var(--fps-counter-color);
             padding: 8px 12px;
             border-radius: 6px;
             font-family: 'Courier New', monospace;
             font-size: 14px;
             font-weight: bold;
-            border: 1px solid rgba(0, 255, 0, 0.3);
+            border: 1px solid var(--fps-counter-border);
         }
 
         .stats-grid {
@@ -264,36 +314,38 @@
         }
 
         .stat-card {
-            background: rgba(0, 0, 0, 0.3);
+            background: rgba(44, 24, 16, 0.4);
             padding: 20px;
             border-radius: 10px;
             text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border-primary);
         }
 
         .stat-value {
             font-size: 2rem;
             font-weight: bold;
-            color: #00ff88;
+            color: var(--accent-tertiary);
             margin-bottom: 5px;
         }
 
         .stat-label {
             font-size: 0.9rem;
             opacity: 0.8;
+            color: var(--text-muted);
         }
 
         .game-controls {
-            background: rgba(0, 0, 0, 0.2);
+            background: var(--surface-primary);
             padding: 20px;
             border-radius: 10px;
             margin: 20px 0;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border-primary);
         }
 
         .game-controls h4 {
             margin-bottom: 15px;
             text-align: center;
+            color: var(--text-primary);
         }
 
         .control-row {
@@ -305,12 +357,12 @@
         }
 
         .key {
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--key-bg);
             padding: 5px 10px;
             border-radius: 5px;
             font-family: monospace;
             font-weight: bold;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid var(--key-border);
         }
 
         .game-info {
@@ -320,6 +372,7 @@
             margin: 20px auto;
             font-size: 18px;
             font-weight: bold;
+            color: var(--text-primary);
         }
 
         .game-over {
@@ -327,20 +380,69 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.95);
+            background: var(--game-over-bg);
             padding: 40px;
             border-radius: 15px;
             text-align: center;
             display: none;
-            border: 2px solid #ff6b6b;
+            border: 2px solid var(--game-over-border);
             backdrop-filter: blur(10px);
             z-index: 1000;
         }
 
         .game-over h3 {
-            color: #ff6b6b;
+            color: var(--game-over-color);
             margin-bottom: 20px;
             font-size: 2rem;
+        }
+
+        /* Toolbar Styles */
+        .toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(26, 15, 15, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-primary);
+            padding: 10px 20px;
+            z-index: 1000;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .toolbar-button {
+            padding: 8px 16px;
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-secondary);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+
+        .toolbar-button:hover {
+            background: var(--surface-secondary);
+            border-color: var(--border-active);
+            color: var(--text-primary);
+            transform: translateY(-1px);
+        }
+
+        .toolbar-button.active {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: white;
+        }
+
+        /* Adjust body padding to account for fixed toolbar */
+        body {
+            padding-top: 60px;
         }
 
         @media (max-width: 768px) {
@@ -365,15 +467,30 @@
             .features {
                 grid-template-columns: 1fr;
             }
+
+            .toolbar {
+                flex-wrap: wrap;
+                gap: 8px;
+                padding: 8px 10px;
+            }
+            
+            .toolbar-button {
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+            
+            body {
+                padding-top: 80px;
+            }
         }
 
         .performance-warning {
-            background: rgba(255, 193, 7, 0.1);
-            border: 1px solid rgba(255, 193, 7, 0.3);
+            background: var(--performance-warning-bg);
+            border: 1px solid var(--performance-warning-border);
             border-radius: 8px;
             padding: 15px;
             margin: 20px 0;
-            color: #ffc107;
+            color: var(--performance-warning-color);
             text-align: center;
         }
 
@@ -381,7 +498,7 @@
             display: inline-block;
             margin-top: 20px;
             padding: 12px 24px;
-            background: linear-gradient(45deg, #ff6b6b, #f06595);
+            background: var(--playground-gradient);
             color: white;
             border: none;
             border-radius: 8px;
@@ -389,16 +506,29 @@
             font-size: 16px;
             font-weight: 600;
             text-decoration: none;
-            box-shadow: 0 4px 15px rgba(240, 101, 149, 0.3);
+            box-shadow: 0 4px 15px var(--playground-shadow);
             transition: all 0.3s ease;
         }
     </style>
 </head>
 
 <body>
+    <!-- Navigation Toolbar -->
+    <div class="toolbar">
+        <a href="#basic-shapes" class="toolbar-button" onclick="scrollToSection(event, 'basic-shapes')">🎯 Basic Shapes</a>
+        <a href="#performance" class="toolbar-button" onclick="scrollToSection(event, 'performance')">🔥 Performance</a>
+        <a href="#animation" class="toolbar-button" onclick="scrollToSection(event, 'animation')">🔄 Animation</a>
+        <a href="#game" class="toolbar-button" onclick="scrollToSection(event, 'game')">🎮 Game Demo</a>
+        <a href="examples/playground.html" class="toolbar-button">🛠️ Playground</a>
+    </div>
+
     <div class="hero">
         <div class="hero-content">
-            <h1>🚀 WebGL Canvas</h1>
+            <div class="hero-title">
+                <img id="bannerImage" src="banner.png" alt="WebGL Canvas" style="display: none;"
+                    onerror="showFallbackTitle()">
+                <h1 id="fallbackTitle" style="display: none;">🚀 WebGL Canvas</h1>
+            </div>
             <div class="subtitle">
                 GPU-Powered 2D Graphics with HTML5 Canvas-like API<br>
                 Easy to use • Blazingly Fast • Game Ready
@@ -410,7 +540,7 @@
                 <div class="feature">
                     <div class="feature-icon">⚡</div>
                     <h3>GPU Accelerated</h3>
-                    <p>Hardware-accelerated rendering for smooth 60fps graphics</p>
+                    <p>Hardware-accelerated rendering for smooth 60fps graphics, leagues faster than traditional canvas</p>
                 </div>
                 <div class="feature">
                     <div class="feature-icon">🎨</div>
@@ -432,7 +562,7 @@
     </div>
 
     <div class="container">
-        <div class="section">
+        <div class="section" id="basic-shapes">
             <h2>🎯 Basic Shapes Demo</h2>
             <canvas id="basicCanvas" width="1000" height="500" tabindex="1"></canvas>
             <div class="controls">
@@ -460,7 +590,7 @@
                 ctx.drawLine(50, 200, 400, 200);
             </div>
         </div>
-        <div class="section">
+        <div class="section" id="performance">
             <h2>🔥 Performance Comparison: WebGL vs Canvas2D</h2>
             <div class="performance-warning">
                 ⚠️ This test renders thousands of objects to showcase performance differences. May be intensive on older
@@ -567,7 +697,7 @@
             </div>
         </div>
 
-        <div class="section">
+        <div class="section" id="animation">
             <h2>🔄 Animation & Transforms</h2>
             <canvas id="animationCanvas" width="1000" height="500" tabindex="3"></canvas>
             <div class="controls">
@@ -592,7 +722,7 @@
             </div>
         </div>
 
-        <div class="section">
+        <div class="section" id="game">
             <h2>🎮 Mini Game Demo</h2>
             <div class="game-info">
                 <div>Score: <span id="gameScore">0</span></div>
@@ -676,8 +806,12 @@
         let asteroids = [];
         let particles = [];
 
+        // Add scroll event listener
+        window.addEventListener('scroll', updateToolbarOnScroll);
+        
         // Wait for DOM to be ready
         document.addEventListener('DOMContentLoaded', function () {
+            checkBannerImage(); // Check for banner image first
             initializeCanvases();
             setupCanvasFocus();
             setupGameInput();
@@ -685,6 +819,8 @@
             // Initial demos
             drawBasicShapes();
             updateGameUI();
+
+            updateActiveToolbarButton('basic-shapes');
         });
 
         // Global demo control - NEW
@@ -1493,6 +1629,74 @@
             document.getElementById('gameScore').textContent = gameScore;
             document.getElementById('gameLives').textContent = gameLives;
             document.getElementById('gameLevel').textContent = gameLevel;
+        }
+
+        
+
+        function showFallbackTitle() {
+            document.getElementById('bannerImage').style.display = 'none';
+            document.getElementById('fallbackTitle').style.display = 'block';
+        }
+
+        function checkBannerImage() {
+            const bannerImg = document.getElementById('bannerImage');
+            const fallbackTitle = document.getElementById('fallbackTitle');
+
+            // Try to load the banner image
+            const testImg = new Image();
+            testImg.onload = function () {
+                bannerImg.style.display = 'block';
+                fallbackTitle.style.display = 'none';
+            };
+            testImg.onerror = function () {
+                bannerImg.style.display = 'none';
+                fallbackTitle.style.display = 'block';
+            };
+            testImg.src = 'banner.png';
+        }
+
+        function scrollToSection(event, sectionId) {
+            event.preventDefault();
+            
+            const section = document.getElementById(sectionId);
+            if (section) {
+                // Smooth scroll to section with offset for fixed toolbar
+                const offsetTop = section.getBoundingClientRect().top + window.pageYOffset - 70;
+                window.scrollTo({
+                    top: offsetTop,
+                    behavior: 'smooth'
+                });
+                
+                // Update active toolbar button
+                updateActiveToolbarButton(sectionId);
+            }
+        }
+
+        function updateActiveToolbarButton(activeId) {
+            // Remove active class from all toolbar buttons
+            document.querySelectorAll('.toolbar-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Add active class to current section button
+            const activeButton = document.querySelector(`[href="#${activeId}"]`);
+            if (activeButton) {
+                activeButton.classList.add('active');
+            }
+        }
+
+        // Update active toolbar button based on scroll position
+        function updateToolbarOnScroll() {
+            const sections = ['basic-shapes', 'performance', 'animation', 'game'];
+            const scrollPosition = window.scrollY + 100; // Offset for toolbar
+            
+            for (let i = sections.length - 1; i >= 0; i--) {
+                const section = document.getElementById(sections[i]);
+                if (section && section.offsetTop <= scrollPosition) {
+                    updateActiveToolbarButton(sections[i]);
+                    break;
+                }
+            }
         }
 
         function clearCanvas(type) {
