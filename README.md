@@ -1,4 +1,4 @@
-[banner](src/icon.ico)
+[banner](banner.png)
 # 🚀 WebGL Canvas
 
 https://horrelltech.github.io/webgl-canvas/
