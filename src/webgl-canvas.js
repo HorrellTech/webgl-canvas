@@ -67,18 +67,21 @@ class WebGLCanvas {
 
         // Batching system
         this.batches = {
-            rectangles: [],
-            circles: [],
-            ellipses: [],
-            lines: [],
-            images: [],
-            text: []
+            rectangles: new Map(),
+            circles: new Map(),
+            ellipses: new Map(),
+            lines: new Map(),
+            images: new Map(),
+            text: new Map()
         };
         this.batchBuffers = {};
 
         // Texture cache for images
         this.textureCache = new Map();
         this.fontCache = new Map();
+
+        this.currentImageBatch = null;
+        this.imageBatchTexture = null;
 
         // Initialize WebGL
         this.init();
@@ -89,6 +92,11 @@ class WebGLCanvas {
 
         // Create batch buffers
         this.createBatchBuffers();
+
+        // Layer system
+        /*this.layers = new Map(); // Map of layer -> batch data
+        this.currentLayer = 0;
+        this.maxLayers = options.maxLayers || 100;*/
 
         // Set initial viewport
         this.gl.viewport(0, 0, this.width, this.height);
@@ -199,13 +207,16 @@ class WebGLCanvas {
             vertices: gl.createBuffer(),
             texCoords: gl.createBuffer(),
             indices: gl.createBuffer(),
+            maxQuads: batchSize,
             maxVertices: batchSize * 4,
             maxIndices: batchSize * 6,
+            currentQuads: 0,
             currentVertices: 0,
             currentIndices: 0,
             vertexData: new Float32Array(batchSize * 4 * 2),
             texCoordData: new Float32Array(batchSize * 4 * 2),
-            indexData: new Uint16Array(batchSize * 6)
+            indexData: new Uint16Array(batchSize * 6),
+            currentTexture: null
         };
     }
 
@@ -712,7 +723,97 @@ class WebGLCanvas {
      * Flush image batch
      */
     flushImages() {
-        // Images are rendered immediately, so nothing to flush
+        const batch = this.batchBuffers.images;
+        if (batch.currentQuads === 0 || !batch.currentTexture) return;
+
+        const gl = this.gl;
+        const program = this.shaders.image;
+
+        gl.useProgram(program);
+
+        // Bind and activate texture
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, batch.currentTexture);
+
+        // Set texture uniform
+        const textureLocation = gl.getUniformLocation(program, 'u_texture');
+        gl.uniform1i(textureLocation, 0);
+
+        // Upload and bind vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        if (positionLoc >= 0) {
+            gl.enableVertexAttribArray(positionLoc);
+            gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        }
+
+        // Upload and bind texture coordinate data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.texCoords);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.texCoordData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
+
+        const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
+        if (texCoordLoc >= 0) {
+            gl.enableVertexAttribArray(texCoordLoc);
+            gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
+        }
+
+        // Upload and bind index data
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.indexData.subarray(0, batch.currentIndices), gl.DYNAMIC_DRAW);
+
+        // Set uniforms
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        if (resolutionLoc) {
+            gl.uniform2f(resolutionLoc, this.width, this.height);
+        }
+
+        const globalAlphaLoc = gl.getUniformLocation(program, 'u_globalAlpha');
+        if (globalAlphaLoc) {
+            gl.uniform1f(globalAlphaLoc, this.state.globalAlpha);
+        }
+
+        // Draw all batched quads in one call
+        gl.drawElements(gl.TRIANGLES, batch.currentIndices, gl.UNSIGNED_SHORT, 0);
+
+        // Check for errors
+        this.checkGLError('flushImages');
+
+        // Reset batch
+        batch.currentVertices = 0;
+        batch.currentIndices = 0;
+        batch.currentQuads = 0;
+        batch.currentTexture = null;
+
+        // Clean up
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+    }
+
+    /*
+    * Force flush of images using a specific texture
+    * Useful when you want to ensure images are drawn before switching textures
+    */
+    flushImagesForTexture(texture) {
+        const batch = this.batchBuffers.images;
+        if (batch.currentTexture === texture && batch.currentQuads > 0) {
+            this.flushImages();
+        }
+    }
+
+    /*
+    * Get current image batch statistics
+    * Useful for monitoring batching efficiency
+    */
+    getImageBatchStats() {
+        const batch = this.batchBuffers.images;
+        return {
+            currentQuads: batch.currentQuads,
+            maxQuads: batch.maxQuads,
+            currentTexture: batch.currentTexture,
+            batchUtilization: (batch.currentQuads / batch.maxQuads * 100).toFixed(1) + '%'
+        };
     }
 
     /*
@@ -1514,12 +1615,20 @@ class WebGLCanvas {
      * Add image to batch
      */
     addImageToBatch(texture, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight) {
-        // For now, flush immediately since we need to bind different textures
-        // TODO: Implement texture atlas for true batching
-        this.flushImages();
-
         const batch = this.batchBuffers.images;
-        const gl = this.gl;
+
+        // If this is a different texture than current batch, flush first
+        if (batch.currentTexture && batch.currentTexture !== texture) {
+            this.flushImages();
+        }
+
+        // If batch is full, flush it
+        if (batch.currentQuads >= batch.maxQuads) {
+            this.flushImages();
+        }
+
+        // Set current texture for this batch
+        batch.currentTexture = texture;
 
         // Transform destination vertices
         const [x1, y1] = this.transformPoint(dx, dy);
@@ -1531,85 +1640,39 @@ class WebGLCanvas {
         const imageWidth = texture.width || 1;
         const imageHeight = texture.height || 1;
         const u1 = sx / imageWidth;
-        const v1 = sy / imageHeight;
+        const v1 = 1.0 - (sy / imageHeight); // Flip V coordinate
         const u2 = (sx + sWidth) / imageWidth;
-        const v2 = (sy + sHeight) / imageHeight;
+        const v2 = 1.0 - ((sy + sHeight) / imageHeight); // Flip V coordinate
 
-        const vertexIndex = 0;
+        const vertexIndex = batch.currentVertices;
+        const quadIndex = batch.currentQuads;
 
-        // Add vertices
-        batch.vertexData[0] = x1; batch.vertexData[1] = y1;
-        batch.vertexData[2] = x2; batch.vertexData[3] = y2;
-        batch.vertexData[4] = x3; batch.vertexData[5] = y3;
-        batch.vertexData[6] = x4; batch.vertexData[7] = y4;
+        // Add vertices for this quad (bottom-left, bottom-right, top-left, top-right)
+        batch.vertexData[vertexIndex * 2 + 0] = x1; batch.vertexData[vertexIndex * 2 + 1] = y1;   // Bottom-left
+        batch.vertexData[vertexIndex * 2 + 2] = x2; batch.vertexData[vertexIndex * 2 + 3] = y2;   // Bottom-right  
+        batch.vertexData[vertexIndex * 2 + 4] = x3; batch.vertexData[vertexIndex * 2 + 5] = y3;   // Top-left
+        batch.vertexData[vertexIndex * 2 + 6] = x4; batch.vertexData[vertexIndex * 2 + 7] = y4;   // Top-right
 
         // Add texture coordinates
-        batch.texCoordData[0] = u1; batch.texCoordData[1] = v1;
-        batch.texCoordData[2] = u2; batch.texCoordData[3] = v1;
-        batch.texCoordData[4] = u1; batch.texCoordData[5] = v2;
-        batch.texCoordData[6] = u2; batch.texCoordData[7] = v2;
+        batch.texCoordData[vertexIndex * 2 + 0] = u1; batch.texCoordData[vertexIndex * 2 + 1] = v2;   // Bottom-left
+        batch.texCoordData[vertexIndex * 2 + 2] = u2; batch.texCoordData[vertexIndex * 2 + 3] = v2;   // Bottom-right
+        batch.texCoordData[vertexIndex * 2 + 4] = u1; batch.texCoordData[vertexIndex * 2 + 5] = v1;   // Top-left
+        batch.texCoordData[vertexIndex * 2 + 6] = u2; batch.texCoordData[vertexIndex * 2 + 7] = v1;   // Top-right
 
-        // Add indices
-        batch.indexData[0] = 0; batch.indexData[1] = 1; batch.indexData[2] = 2;
-        batch.indexData[3] = 1; batch.indexData[4] = 2; batch.indexData[5] = 3;
+        // Add indices for this quad (two triangles)
+        const indexBase = batch.currentVertices;
+        const indexOffset = batch.currentIndices;
+        batch.indexData[indexOffset + 0] = indexBase + 0; // First triangle
+        batch.indexData[indexOffset + 1] = indexBase + 1;
+        batch.indexData[indexOffset + 2] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1; // Second triangle
+        batch.indexData[indexOffset + 4] = indexBase + 3;
+        batch.indexData[indexOffset + 5] = indexBase + 2;
 
-        batch.currentVertices = 4;
-        batch.currentIndices = 6;
-
-        // Render immediately
-        this.renderImageBatch(texture);
-    }
-
-    /*
-     * Render image batch
-     */
-    renderImageBatch(texture) {
-        const batch = this.batchBuffers.images;
-        if (batch.currentVertices === 0) return;
-
-        const gl = this.gl;
-        const program = this.shaders.image;
-
-        gl.useProgram(program);
-
-        // Bind texture
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.uniform1i(gl.getUniformLocation(program, 'u_texture'), 0);
-
-        // Upload vertex data
-        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
-        gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
-
-        const positionLoc = gl.getAttribLocation(program, 'a_position');
-        gl.enableVertexAttribArray(positionLoc);
-        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
-
-        // Upload texture coordinate data
-        gl.bindBuffer(gl.ARRAY_BUFFER, batch.texCoords);
-        gl.bufferData(gl.ARRAY_BUFFER, batch.texCoordData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
-
-        const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
-        gl.enableVertexAttribArray(texCoordLoc);
-        gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
-
-        // Upload index data
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.indexData.subarray(0, batch.currentIndices), gl.DYNAMIC_DRAW);
-
-        // Set uniforms
-        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-        gl.uniform2f(resolutionLoc, this.width, this.height);
-
-        const globalAlphaLoc = gl.getUniformLocation(program, 'u_globalAlpha');
-        gl.uniform1f(globalAlphaLoc, this.state.globalAlpha);
-
-        // Draw
-        gl.drawElements(gl.TRIANGLES, batch.currentIndices, gl.UNSIGNED_SHORT, 0);
-
-        // Reset batch
-        batch.currentVertices = 0;
-        batch.currentIndices = 0;
+        // Update counters
+        batch.currentVertices += 4;
+        batch.currentIndices += 6;
+        batch.currentQuads += 1;
     }
 
     /*
@@ -1639,6 +1702,10 @@ class WebGLCanvas {
         // Upload image data
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
 
+        // Store dimensions on texture for easy access
+        texture.width = image.width || image.videoWidth || image.naturalWidth;
+        texture.height = image.height || image.videoHeight || image.naturalHeight;
+
         this.textureCache.set(image, texture);
         return texture;
     }
@@ -1656,6 +1723,12 @@ class WebGLCanvas {
      * @param {number} dHeight - Destination height (optional)
      */
     drawImage(image, ...args) {
+        // Check if image is loaded
+        if (!image || !image.complete || image.naturalWidth === 0) {
+            console.warn('Image not loaded or invalid');
+            return;
+        }
+
         let sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight;
 
         if (args.length === 2) {
@@ -1682,6 +1755,7 @@ class WebGLCanvas {
         }
 
         const texture = this.getOrCreateTexture(image);
+        // Now just add to batch instead of rendering immediately
         this.addImageToBatch(texture, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
     }
 
