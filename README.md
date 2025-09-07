@@ -1,4 +1,4 @@
-[banner](banner.png)
+![alt text](Banner.png)
 # 🚀 WebGL Canvas
 
 https://horrelltech.github.io/webgl-canvas/
