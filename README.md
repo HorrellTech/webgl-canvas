@@ -1,4 +1,7 @@
+[banner](src/icon.ico)
 # 🚀 WebGL Canvas
+
+https://horrelltech.github.io/webgl-canvas/
 
 A comprehensive WebGL-powered 2D graphics library that provides a familiar HTML5 Canvas API with GPU acceleration and advanced features. Perfect for games, visualizations, and interactive graphics that need high performance.
 
