@@ -140,8 +140,9 @@
             background: #000;
             transition: box-shadow 0.3s ease, border-color 0.3s ease;
             outline: none;
-            /* Remove default focus outline */
             cursor: pointer;
+            position: relative;
+            /* Add this to fix FPS counter positioning */
         }
 
         canvas:hover {
@@ -375,6 +376,22 @@
             color: #ffc107;
             text-align: center;
         }
+
+        .playground-link {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: linear-gradient(45deg, #ff6b6b, #f06595);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            box-shadow: 0 4px 15px rgba(240, 101, 149, 0.3);
+            transition: all 0.3s ease;
+        }
     </style>
 </head>
 
@@ -386,6 +403,8 @@
                 GPU-Powered 2D Graphics with HTML5 Canvas-like API<br>
                 Easy to use • Blazingly Fast • Game Ready
             </div>
+
+            <a href="examples/playground.html" class="playground-link">🛠️ Open Playground</a>
 
             <div class="features">
                 <div class="feature">
@@ -454,9 +473,12 @@
                 <!-- WebGL Canvas Side -->
                 <div>
                     <h3 style="text-align: center; margin-bottom: 15px; color: #00ff88;">🚀 WebGL Canvas</h3>
-                    <canvas id="stressCanvas" width="500" height="400" style="position: relative;" tabindex="2">
-                        <div class="fps-counter" id="fpsCounter">FPS: --</div>
-                    </canvas>
+                    <div style="position: relative; display: inline-block; width: 100%; text-align: center;">
+                        <canvas id="stressCanvas" width="500" height="400"
+                            style="position: relative; border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 12px; display: block; margin: 0 auto; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); background: #000;"
+                            tabindex="2"></canvas>
+                        <!--div class="fps-counter" id="fpsCounter">FPS: --</div-->
+                    </div>
                     <div class="stats-grid" style="grid-template-columns: 1fr 1fr; margin-top: 10px;">
                         <div class="stat-card">
                             <div class="stat-value" id="webglObjectCount">0</div>

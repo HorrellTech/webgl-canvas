@@ -491,6 +491,150 @@ class WebGLCanvas {
     }
 
     /*
+    * Clear a rectangular area to transparent
+    * Canvas API equivalent: clearRect(x, y, width, height)
+    * @param {number} x - X coordinate of rectangle
+    * @param {number} y - Y coordinate of rectangle  
+    * @param {number} width - Width of rectangle
+    * @param {number} height - Height of rectangle
+    */
+    clearRect(x, y, width, height) {
+        // Flush current batches first
+        this.flush();
+
+        const gl = this.gl;
+
+        // Enable scissor test to limit clearing to specific rectangle
+        gl.enable(gl.SCISSOR_TEST);
+
+        // Transform coordinates if needed
+        const [transformedX, transformedY] = this.transformPoint(x, y);
+        const [transformedX2, transformedY2] = this.transformPoint(x + width, y + height);
+
+        // Calculate actual rectangle bounds
+        const minX = Math.min(transformedX, transformedX2);
+        const maxX = Math.max(transformedX, transformedX2);
+        const minY = Math.min(transformedY, transformedY2);
+        const maxY = Math.max(transformedY, transformedY2);
+
+        // Convert to WebGL screen coordinates (flip Y)
+        const screenY = this.height - maxY;
+        const rectWidth = maxX - minX;
+        const rectHeight = maxY - minY;
+
+        // Set scissor rectangle
+        gl.scissor(
+            Math.floor(minX),
+            Math.floor(screenY),
+            Math.ceil(rectWidth),
+            Math.ceil(rectHeight)
+        );
+
+        // Clear the scissored area
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // Disable scissor test
+        gl.disable(gl.SCISSOR_TEST);
+    }
+
+    /*
+     * Set the clear color (background color when clearing)
+     * @param {string|Array} color - Color to clear to
+     */
+    setClearColor(color) {
+        const rgba = this.parseColor(color);
+        this.gl.clearColor(rgba[0], rgba[1], rgba[2], rgba[3]);
+    }
+
+    /*
+     * Get current clear color
+     * @return {Array} - RGBA array of current clear color
+     */
+    getClearColor() {
+        const gl = this.gl;
+        return gl.getParameter(gl.COLOR_CLEAR_VALUE);
+    }
+
+    /*
+     * Clear canvas to a specific color
+     * @param {string|Array} color - Color to clear to (optional, uses current clear color if not specified)
+     */
+    clearToColor(color) {
+        if (color) {
+            // Temporarily set clear color
+            const currentClearColor = this.getClearColor();
+            this.setClearColor(color);
+            this.clear();
+            // Restore previous clear color
+            this.gl.clearColor(currentClearColor[0], currentClearColor[1], currentClearColor[2], currentClearColor[3]);
+        } else {
+            this.clear();
+        }
+    }
+
+    /*
+     * Clear a rectangular area to a specific color
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @param {number} width - Width
+     * @param {number} height - Height
+     * @param {string|Array} color - Color to clear to
+     */
+    clearRectToColor(x, y, width, height, color) {
+        // Save current fill style
+        const currentFillStyle = [...this.state.fillStyle];
+        const currentGlobalAlpha = this.state.globalAlpha;
+
+        // Set fill style to clear color with full opacity
+        this.fillStyle = color;
+        this.globalAlpha = 1;
+
+        // Draw a rectangle with the clear color
+        this.fillRect(x, y, width, height);
+
+        // Restore previous fill style
+        this.state.fillStyle = currentFillStyle;
+        this.state.globalAlpha = currentGlobalAlpha;
+    }
+
+    /*
+     * Fill entire canvas with a color (like clearToColor but uses fillStyle)
+     */
+    fillCanvas() {
+        this.fillRect(0, 0, this.width, this.height);
+    }
+
+    /*
+     * Clear with checkerboard pattern (useful for transparency visualization)
+     * @param {number} size - Size of checkerboard squares (default: 16)
+     * @param {string|Array} color1 - First color (default: light gray)
+     * @param {string|Array} color2 - Second color (default: white)
+     */
+    clearWithCheckerboard(size = 16, color1 = '#E0E0E0', color2 = '#FFFFFF') {
+        // Save current state
+        const currentFillStyle = [...this.state.fillStyle];
+
+        // Clear to transparent first
+        this.clear();
+
+        // Draw checkerboard pattern
+        const cols = Math.ceil(this.width / size);
+        const rows = Math.ceil(this.height / size);
+
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                // Alternate colors based on position
+                const isEven = (row + col) % 2 === 0;
+                this.fillStyle = isEven ? color1 : color2;
+                this.fillRect(col * size, row * size, size, size);
+            }
+        }
+
+        // Restore fill style
+        this.state.fillStyle = currentFillStyle;
+    }
+
+    /*
      * Set global alpha (transparency)
      * @param {number} alpha - Alpha value (0-1)
      */
@@ -673,6 +817,9 @@ class WebGLCanvas {
         // Reset batch after flushing
         batch.currentVertices = 0;
         batch.currentIndices = 0;
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
     }
 
     /*
@@ -892,8 +1039,11 @@ class WebGLCanvas {
      */
     set imageSmoothingQuality(quality) {
         const validQualities = ['low', 'medium', 'high'];
+        const intQualities = [0, 1, 2]; // For compatibility with numeric values
         if (validQualities.includes(quality)) {
             this.state.imageSmoothingQuality = quality;
+        } else if (intQualities.includes(quality)) {
+            this.state.imageSmoothingQuality = validQualities[quality];
         }
     }
 
@@ -2340,7 +2490,43 @@ class WebGLCanvas {
         * @param {string} fragmentShaderSource - GLSL source code for the fragment shader
     */
     addShader(name, vertexShaderSource, fragmentShaderSource) {
-        this.shaders[name] = this.createShaderProgram(vertexShaderSource, fragmentShaderSource);
+        try {
+            const program = this.createShaderProgram(vertexShaderSource, fragmentShaderSource);
+
+            // Cache attribute and uniform locations for better performance
+            const attributes = {};
+            const uniforms = {};
+
+            // Get all active attributes
+            const numAttributes = this.gl.getProgramParameter(program, this.gl.ACTIVE_ATTRIBUTES);
+            for (let i = 0; i < numAttributes; i++) {
+                const info = this.gl.getActiveAttrib(program, i);
+                if (info) {
+                    const location = this.gl.getAttribLocation(program, info.name);
+                    attributes[info.name] = location;
+                }
+            }
+
+            // Get all active uniforms
+            const numUniforms = this.gl.getProgramParameter(program, this.gl.ACTIVE_UNIFORMS);
+            for (let i = 0; i < numUniforms; i++) {
+                const info = this.gl.getActiveUniform(program, i);
+                if (info) {
+                    const location = this.gl.getUniformLocation(program, info.name);
+                    uniforms[info.name] = location;
+                }
+            }
+
+            this.shaders[name] = program;
+            this.shaders[name].attributes = attributes;
+            this.shaders[name].uniforms = uniforms;
+            this.shaders[name].name = name; // Add name for debugging
+
+            return program;
+        } catch (error) {
+            console.error(`Failed to create shader "${name}":`, error);
+            throw error;
+        }
     }
 
     /*
@@ -2351,10 +2537,143 @@ class WebGLCanvas {
     */
     useShader(name) {
         if (this.shaders[name]) {
-            this.gl.useProgram(this.shaders[name]);
-            return this.shaders[name];
+            const program = this.shaders[name];
+            this.gl.useProgram(program);
+            this.currentShader = program; // Keep track of current shader
+            return program;
         }
-        throw new Error(`Shader "${name}" not found`);
+        throw new Error(`Shader "${name}" not found. Available shaders: ${Object.keys(this.shaders).join(', ')}`);
+    }
+
+    /*
+    * Draw with custom shader
+    * @param {string} shaderName - Name of the shader to use
+    * @param {Float32Array} vertices - Vertex data
+    * @param {Uint16Array} indices - Index data (optional)
+    * @param {Object} uniforms - Uniform values to set
+    * @param {Object} attributes - Additional attribute data
+    */
+    drawWithShader(shaderName, vertices, indices = null, uniforms = {}, attributes = {}) {
+        const program = this.useShader(shaderName);
+        const gl = this.gl;
+
+        // Create vertex buffer if needed
+        if (!this.customVertexBuffer) {
+            this.customVertexBuffer = gl.createBuffer();
+        }
+
+        // Upload vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.customVertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+
+        // Set up position attribute (assuming it exists)
+        if (program.attributes['a_position'] !== undefined) {
+            gl.enableVertexAttribArray(program.attributes['a_position']);
+            gl.vertexAttribPointer(program.attributes['a_position'], 2, gl.FLOAT, false, 0, 0);
+        }
+
+        // Set additional attributes
+        Object.keys(attributes).forEach(name => {
+            const location = program.attributes[name];
+            if (location !== undefined) {
+                const data = attributes[name];
+                // Create buffer for this attribute
+                const buffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data.data, gl.DYNAMIC_DRAW);
+
+                gl.enableVertexAttribArray(location);
+                gl.vertexAttribPointer(location, data.size, data.type || gl.FLOAT, false, 0, 0);
+            }
+        });
+
+        // Set uniforms
+        Object.keys(uniforms).forEach(name => {
+            const location = program.uniforms[name];
+            if (location !== null) {
+                const value = uniforms[name];
+                if (Array.isArray(value)) {
+                    switch (value.length) {
+                        case 1: gl.uniform1f(location, value[0]); break;
+                        case 2: gl.uniform2f(location, value[0], value[1]); break;
+                        case 3: gl.uniform3f(location, value[0], value[1], value[2]); break;
+                        case 4: gl.uniform4f(location, value[0], value[1], value[2], value[3]); break;
+                    }
+                } else if (typeof value === 'number') {
+                    gl.uniform1f(location, value);
+                }
+            }
+        });
+
+        // Set common uniforms if they exist
+        if (program.uniforms['u_resolution']) {
+            gl.uniform2f(program.uniforms['u_resolution'], this.width, this.height);
+        }
+        if (program.uniforms['u_globalAlpha']) {
+            gl.uniform1f(program.uniforms['u_globalAlpha'], this.state.globalAlpha);
+        }
+
+        // Draw
+        if (indices) {
+            // Create index buffer if needed
+            if (!this.customIndexBuffer) {
+                this.customIndexBuffer = gl.createBuffer();
+            }
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.customIndexBuffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.DYNAMIC_DRAW);
+            gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+        } else {
+            gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+        }
+    }
+
+    /*
+    * Helper method to create a simple quad for shader testing
+    * @param {number} x - X position
+    * @param {number} y - Y position
+    * @param {number} width - Width
+    * @param {number} height - Height
+    * @return {Object} - Vertices and indices for a quad
+    */
+    createQuad(x, y, width, height) {
+        const vertices = new Float32Array([
+            x, y,                    // Bottom-left
+            x + width, y,            // Bottom-right
+            x, y + height,           // Top-left
+            x + width, y + height    // Top-right
+        ]);
+
+        const indices = new Uint16Array([
+            0, 1, 2,    // First triangle
+            1, 2, 3     // Second triangle
+        ]);
+
+        return { vertices, indices };
+    }
+
+    /*
+     * List all available shaders
+     * @return {Array} - Array of shader names
+     */
+    listShaders() {
+        return Object.keys(this.shaders);
+    }
+
+    /*
+    * Get shader info for debugging
+    * @param {string} name - Shader name
+    * @return {Object} - Shader information
+    */
+    getShaderInfo(name) {
+        const program = this.shaders[name];
+        if (!program) return null;
+
+        return {
+            name: name,
+            attributes: Object.keys(program.attributes || {}),
+            uniforms: Object.keys(program.uniforms || {}),
+            program: program
+        };
     }
 
     /*
@@ -2378,6 +2697,15 @@ class WebGLCanvas {
         this.options.batchSize = size;
         // Recreate buffers with new size
         this.createBatchBuffers();
+    }
+
+    checkGLError(operation) {
+        const error = this.gl.getError();
+        if (error !== this.gl.NO_ERROR) {
+            console.error(`WebGL error after ${operation}: ${error}`);
+            return false;
+        }
+        return true;
     }
 
     /*

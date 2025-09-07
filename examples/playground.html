@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Canvas Playground</title>
+
+    <!-- CodeMirror CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #ffffff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .playground-container {
+            display: flex;
+            height: 100vh;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+        }
+
+        .editor-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1e1e1e;
+            border-right: 1px solid #444;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            padding: 10px 15px;
+            background: #2d2d30;
+            border-bottom: 1px solid #444;
+            gap: 15px;
+        }
+
+        .toolbar button {
+            padding: 8px 16px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .toolbar button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .toolbar button:active {
+            transform: translateY(0);
+        }
+
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-container input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #667eea;
+        }
+
+        .checkbox-container label {
+            font-size: 14px;
+            color: #ccc;
+            cursor: pointer;
+        }
+
+        .editor-wrapper {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .code-editor {
+            width: 100%;
+            height: 100%;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            padding: 20px;
+            border: none;
+            outline: none;
+            resize: none;
+            tab-size: 2;
+            white-space: pre;
+            overflow: auto;
+        }
+
+        .code-editor::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        .code-editor::-webkit-scrollbar-track {
+            background: #252526;
+        }
+
+        .code-editor::-webkit-scrollbar-thumb {
+            background: #464647;
+            border-radius: 6px;
+        }
+
+        .code-editor::-webkit-scrollbar-thumb:hover {
+            background: #5a5a5a;
+        }
+
+        .resizer {
+            width: 8px;
+            background: #444;
+            cursor: col-resize;
+            position: relative;
+            transition: background-color 0.2s ease;
+        }
+
+        .resizer:hover {
+            background: #667eea;
+        }
+
+        .resizer::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 3px;
+            height: 40px;
+            background: #666;
+            border-radius: 2px;
+        }
+
+        .canvas-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #2c2c2c;
+            position: relative;
+        }
+
+        .canvas-header {
+            padding: 10px 15px;
+            background: #2d2d30;
+            border-bottom: 1px solid #444;
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .canvas-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
+        }
+
+        #playground-canvas {
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: #000;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            transition: border-color 0.3s ease;
+        }
+
+        #playground-canvas:focus {
+            border-color: rgba(102, 126, 234, 0.8);
+            outline: none;
+        }
+
+        .error-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(220, 53, 69, 0.95);
+            color: white;
+            padding: 20px 30px;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(220, 53, 69, 0.5);
+            display: none;
+            z-index: 1000;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 15px;
+            background: #007acc;
+            color: white;
+            font-size: 12px;
+        }
+
+        .fps-counter {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-weight: bold;
+        }
+
+        .CodeMirror {
+            height: 100% !important;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            background: #1e1e1e !important;
+            color: #d4d4d4 !important;
+        }
+
+        .examples-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .examples-select {
+            padding: 8px 35px 8px 16px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            appearance: none;
+            min-width: 150px;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .examples-select:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .examples-dropdown::after {
+            content: '▼';
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+            font-size: 12px;
+            color: white;
+        }
+
+        .examples-select option {
+            background: #2d2d30;
+            color: white;
+            padding: 8px;
+        }
+
+        @media (max-width: 768px) {
+            .playground-container {
+                flex-direction: column;
+            }
+
+            .resizer {
+                width: 100%;
+                height: 8px;
+                cursor: row-resize;
+            }
+
+            .resizer::before {
+                width: 40px;
+                height: 3px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- CodeMirror JavaScript -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
+
+    <div class="playground-container">
+        <div class="editor-panel">
+            <div class="toolbar">
+                <button id="run-btn">▶️ Run Code</button>
+                <div class="examples-dropdown">
+                    <select id="examples-select" class="examples-select">
+                        <option value="">Select Example...</option>
+                    </select>
+                </div>
+                <div class="checkbox-container">
+                    <input type="checkbox" id="auto-run" checked>
+                    <label for="auto-run">Auto Run</label>
+                </div>
+            </div>
+            <div class="editor-wrapper">
+                <textarea id="code-editor" class="code-editor"
+                    placeholder="Start coding with WebGL Canvas..."></textarea>
+            </div>
+        </div>
+
+        <div class="resizer" id="resizer"></div>
+
+        <div class="canvas-panel">
+            <div class="canvas-header">
+                Canvas Output
+            </div>
+            <div class="canvas-container">
+                <canvas id="playground-canvas" width="600" height="400" tabindex="1"></canvas>
+                <div id="error-overlay" class="error-overlay">No valid code to run</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span>WebGL Canvas Playground</span>
+        <span id="fps-counter" class="fps-counter">FPS: 0</span>
+    </div>
+
+    <script>
+        // Check if scripts loaded properly
+        console.log('CodeMirror loaded:', typeof CodeMirror !== 'undefined');
+
+        // Load other scripts conditionally
+        function loadScript(src) {
+            return new Promise((resolve, reject) => {
+                // Check if script already exists
+                const existingScript = document.querySelector(`script[src="${src}"]`);
+                if (existingScript) {
+                    resolve();
+                    return;
+                }
+
+                const script = document.createElement('script');
+                script.src = src;
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        // Load examples.js and webgl-canvas.js only once
+        Promise.all([
+            loadScript('examples.js').catch(() => console.log('examples.js not found - skipping')),
+            loadScript('../src/webgl-canvas.js').catch(() => console.log('webgl-canvas.js not found - using fallback'))
+        ]).then(() => {
+            initializePlayground();
+        });
+
+        function initializePlayground() {
+            // Playground functionality
+            class WebGLPlayground {
+                constructor() {
+                    this.canvas = document.getElementById('playground-canvas');
+                    this.editor = document.getElementById('code-editor');
+                    this.runBtn = document.getElementById('run-btn');
+                    this.autoRunCheckbox = document.getElementById('auto-run');
+                    this.errorOverlay = document.getElementById('error-overlay');
+                    this.fpsCounter = document.getElementById('fps-counter');
+                    this.resizer = document.getElementById('resizer');
+                    this.examplesSelect = document.getElementById('examples-select');
+
+                    console.log('Canvas element:', this.canvas);
+                    console.log('Editor element:', this.editor);
+
+                    this.ctx = null;
+                    this.animationId = null;
+                    this.lastTime = 0;
+                    this.frameCount = 0;
+                    this.fpsUpdateTime = 0;
+                    this.codeMirror = null;
+
+                    this.initCanvas();
+                    this.setupEditor();
+                    this.setupExamples();
+                    this.setupResizer();
+                    this.setupEventListeners();
+                    this.loadDefaultCode();
+                    this.runCode();
+                }
+
+                initCanvas() {
+                    try {
+                        // Check if WebGLCanvas is available, fallback to 2D context
+                        if (typeof WebGLCanvas !== 'undefined') {
+                            this.ctx = new WebGLCanvas(this.canvas);
+                            console.log('WebGL context initialized');
+                        } else {
+                            console.log('WebGLCanvas not available, using 2D context');
+                            this.ctx = this.canvas.getContext('2d');
+                        }
+                        this.hideError();
+                        console.log('Canvas initialized:', this.canvas, this.ctx);
+                    } catch (error) {
+                        console.error('Canvas initialization error:', error);
+                        this.showError('Failed to initialize canvas: ' + error.message);
+                    }
+                }
+
+                setupEditor() {
+                    // Check if CodeMirror is available
+                    if (typeof CodeMirror === 'undefined') {
+                        console.error('CodeMirror not loaded!');
+                        // Keep textarea visible as fallback
+                        this.editor.style.display = 'block';
+                        return;
+                    }
+
+                    try {
+                        // Initialize CodeMirror
+                        this.codeMirror = CodeMirror.fromTextArea(this.editor, {
+                            mode: 'javascript',
+                            theme: 'monokai',
+                            lineNumbers: true,
+                            indentUnit: 2,
+                            tabSize: 2,
+                            indentWithTabs: false,
+                            lineWrapping: true,
+                            matchBrackets: true,
+                            autoCloseBrackets: true,
+                            foldGutter: true,
+                            gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter']
+                        });
+
+                        console.log('CodeMirror initialized:', this.codeMirror);
+
+                        // Auto-run on change
+                        this.codeMirror.on('change', () => {
+                            if (this.autoRunCheckbox.checked) {
+                                clearTimeout(this.autoRunTimer);
+                                this.autoRunTimer = setTimeout(() => this.runCode(), 500);
+                            }
+                        });
+
+                        // Force refresh after initialization
+                        requestAnimationFrame(() => {
+                            this.codeMirror.refresh();
+                            this.codeMirror.focus();
+                        });
+
+                    } catch (error) {
+                        console.error('Error initializing CodeMirror:', error);
+                        // Show textarea as fallback
+                        this.editor.style.display = 'block';
+                        this.editor.style.height = '100%';
+                    }
+                }
+
+                setupResizer() {
+                    let isResizing = false;
+                    let startX = 0;
+                    let startWidth = 0;
+
+                    this.resizer.addEventListener('mousedown', (e) => {
+                        isResizing = true;
+                        startX = e.clientX;
+                        const editorPanel = document.querySelector('.editor-panel');
+                        startWidth = parseInt(document.defaultView.getComputedStyle(editorPanel).width, 10);
+                        document.addEventListener('mousemove', resize);
+                        document.addEventListener('mouseup', stopResize);
+                        e.preventDefault();
+                    });
+
+                    const resize = (e) => {
+                        if (!isResizing) return;
+                        const dx = e.clientX - startX;
+                        const newWidth = startWidth + dx;
+                        const container = document.querySelector('.playground-container');
+                        const minWidth = 300;
+                        const maxWidth = container.offsetWidth - 300;
+
+                        if (newWidth >= minWidth && newWidth <= maxWidth) {
+                            const editorPanel = document.querySelector('.editor-panel');
+                            const canvasPanel = document.querySelector('.canvas-panel');
+                            editorPanel.style.flex = `0 0 ${newWidth}px`;
+                            canvasPanel.style.flex = '1';
+
+                            // Refresh CodeMirror after resize
+                            if (this.codeMirror) {
+                                setTimeout(() => this.codeMirror.refresh(), 10);
+                            }
+                        }
+                    };
+
+                    const stopResize = () => {
+                        isResizing = false;
+                        document.removeEventListener('mousemove', resize);
+                        document.removeEventListener('mouseup', stopResize);
+                    };
+                }
+
+                setupExamples() {
+                    // Load examples from examples.js
+                    if (typeof window.Examples !== 'undefined') {
+                        const examples = window.Examples;
+
+                        // Clear existing options except the first one
+                        this.examplesSelect.innerHTML = '<option value="">Select Example...</option>';
+
+                        // Add each example to the dropdown
+                        Object.keys(examples).forEach(key => {
+                            const option = document.createElement('option');
+                            option.value = key;
+                            option.textContent = examples[key].name || key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                            this.examplesSelect.appendChild(option);
+                        });
+
+                        // Handle example selection
+                        this.examplesSelect.addEventListener('change', (e) => {
+                            const selectedExample = e.target.value;
+                            if (selectedExample && examples[selectedExample]) {
+                                const exampleCode = examples[selectedExample].code || examples[selectedExample].toString();
+                                this.codeMirror.setValue(exampleCode);
+                                this.runCode();
+                            }
+                        });
+                    }
+                }
+
+                setupEventListeners() {
+                    this.runBtn.addEventListener('click', () => this.runCode());
+
+                    // For fallback textarea
+                    this.editor.addEventListener('input', () => {
+                        if (this.autoRunCheckbox.checked) {
+                            clearTimeout(this.autoRunTimer);
+                            this.autoRunTimer = setTimeout(() => this.runCode(), 500);
+                        }
+                    });
+
+                    // Canvas focus management
+                    this.canvas.addEventListener('click', () => {
+                        this.canvas.focus();
+                    });
+
+                    // Keyboard shortcuts
+                    document.addEventListener('keydown', (e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                            e.preventDefault();
+                            this.runCode();
+                        }
+                    });
+                }
+
+                loadDefaultCode() {
+                    const defaultCode = `// Simple canvas drawing example
+// Canvas and WebGLCanvas are available as global variables
+
+// Initialize context
+const ctx = typeof WebGLCanvas !== 'undefined' ? 
+    new WebGLCanvas(canvas) : 
+    canvas.getContext('2d');
+
+// Clear canvas
+ctx.fillStyle = '#000000';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+// Draw colorful rectangles
+ctx.fillStyle = '#ff6b6b';
+ctx.fillRect(50, 50, 100, 80);
+
+ctx.fillStyle = '#4ecdc4';
+ctx.fillRect(200, 50, 100, 80);
+
+ctx.fillStyle = '#45b7d1';
+ctx.fillRect(350, 50, 100, 80);
+
+// Draw circles
+ctx.fillStyle = '#ff9ff3';
+ctx.beginPath();
+ctx.arc(100, 200, 40, 0, Math.PI * 2);
+ctx.fill();
+
+ctx.fillStyle = '#54a0ff';
+ctx.beginPath();
+ctx.arc(250, 200, 40, 0, Math.PI * 2);
+ctx.fill();
+
+ctx.fillStyle = '#5f27cd';
+ctx.beginPath();
+ctx.arc(400, 200, 40, 0, Math.PI * 2);
+ctx.fill();
+
+// Flush all batched rendering (WebGL only)
+if (ctx.flush) ctx.flush();`;
+
+                    if (this.codeMirror) {
+                        this.codeMirror.setValue(defaultCode);
+                    } else {
+                        this.editor.value = defaultCode;
+                    }
+                }
+
+                runCode() {
+                    try {
+                        // Cancel any running animation
+                        if (this.animationId) {
+                            cancelAnimationFrame(this.animationId);
+                            this.animationId = null;
+                        }
+
+                        // Reset canvas state completely
+                        this.resetCanvas();
+
+                        // Get code from CodeMirror or textarea
+                        const code = this.codeMirror ? this.codeMirror.getValue() : this.editor.value;
+
+                        if (!code.trim()) {
+                            this.showError('No code to run');
+                            return;
+                        }
+
+                        console.log('Executing code:', code.substring(0, 100) + '...');
+
+                        // Create function with access to canvas and context
+                        const executeCode = new Function('canvas', 'WebGLCanvas', code);
+                        executeCode(this.canvas, window.WebGLCanvas);
+
+                        this.hideError();
+                        this.startFPSCounter();
+
+                    } catch (error) {
+                        console.error('Code execution error:', error);
+                        this.showError(error.message);
+                    }
+                }
+
+                resetCanvas() {
+                    try {
+                        // If we have a WebGL context, clean it up properly
+                        if (this.ctx && typeof this.ctx.dispose === 'function') {
+                            this.ctx.dispose(); // Clean up shaders, buffers, etc.
+                        }
+
+                        // Clear the canvas completely
+                        const gl = this.canvas.getContext('webgl2') || this.canvas.getContext('webgl');
+                        if (gl) {
+                            // Clear all WebGL state
+                            gl.useProgram(null);
+                            gl.bindBuffer(gl.ARRAY_BUFFER, null);
+                            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+                            gl.bindTexture(gl.TEXTURE_2D, null);
+                            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+
+                            // Reset viewport
+                            gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+                        } else {
+                            // For 2D context, just clear the canvas
+                            const ctx2d = this.canvas.getContext('2d');
+                            if (ctx2d) {
+                                ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                                ctx2d.resetTransform();
+                            }
+                        }
+
+                        // Reinitialize the context
+                        this.initCanvas();
+
+                    } catch (error) {
+                        console.error('Error resetting canvas:', error);
+                        // Force reinitialize on error
+                        this.initCanvas();
+                    }
+                }
+
+                showError(message) {
+                    this.errorOverlay.textContent = message;
+                    this.errorOverlay.style.display = 'block';
+                }
+
+                hideError() {
+                    this.errorOverlay.style.display = 'none';
+                }
+
+                startFPSCounter() {
+                    const updateFPS = (currentTime) => {
+                        this.frameCount++;
+
+                        if (currentTime - this.fpsUpdateTime >= 1000) {
+                            const fps = Math.round((this.frameCount * 1000) / (currentTime - this.fpsUpdateTime));
+                            this.fpsCounter.textContent = `FPS: ${fps}`;
+                            this.frameCount = 0;
+                            this.fpsUpdateTime = currentTime;
+                        }
+
+                        this.animationId = requestAnimationFrame(updateFPS);
+                    };
+
+                    this.fpsUpdateTime = performance.now();
+                    this.frameCount = 0;
+                    updateFPS(this.fpsUpdateTime);
+                }
+            }
+
+            // Initialize the playground
+            new WebGLPlayground();
+        }
+    </script>
+</body>
+
+</html>
