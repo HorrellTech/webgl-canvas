@@ -62,35 +62,105 @@ const ctx = new WebGLCanvas(canvas, {
     enableFullscreen: true
 });
 
-// Game renders at 320x240, displays scaled up with crisp pixels
-class Player {
-    constructor() {
-        this.x = 160; this.y = 120; this.size = 16;
-        this.sprite = new Image();
-        this.sprite.src = 'player.png';
-    }
+// Simple player object
+function createPlayer() {
+    return {
+        x: 160,
+        y: 120,
+        size: 16,
+        speed: 2,
+        color: '#ff4444',
+        
+        update() {
+            // Simple movement with arrow keys
+            if (keys.ArrowLeft) this.x -= this.speed;
+            if (keys.ArrowRight) this.x += this.speed;
+            if (keys.ArrowUp) this.y -= this.speed;
+            if (keys.ArrowDown) this.y += this.speed;
+            
+            // Keep player on screen
+            this.x = Math.max(8, Math.min(312, this.x));
+            this.y = Math.max(8, Math.min(232, this.y));
+        },
+        
+        render() {
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x - 8, this.y - 8, 16, 16);
+        }
+    };
+}
+
+// Simple bullet system
+function createBullet(x, y, vx, vy) {
+    return {
+        x, y, vx, vy,
+        size: 3,
+        life: 120, // frames
+        
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.life--;
+            return this.life > 0;
+        },
+        
+        render() {
+            ctx.fillStyle = '#ffff00';
+            ctx.fillCircle(this.x, this.y, this.size);
+        }
+    };
+}
+
+// Game state
+const player = createPlayer();
+const bullets = [];
+const keys = {};
+
+// Input handling
+window.addEventListener('keydown', (e) => keys[e.key] = true);
+window.addEventListener('keyup', (e) => keys[e.key] = false);
+
+// Shoot bullets
+let shootCooldown = 0;
+function handleShooting() {
+    if (shootCooldown > 0) shootCooldown--;
     
-    render(ctx) {
-        // Image stays crisp even when scaled
-        ctx.drawImage(this.sprite, this.x - 8, this.y - 8, 16, 16);
+    if (keys[' '] && shootCooldown === 0) { // Spacebar
+        bullets.push(createBullet(player.x, player.y - 8, 0, -4));
+        shootCooldown = 10;
     }
 }
 
-// Handles hundreds of sprites at 60fps
-const bullets = [];
-const enemies = [];
-const particles = [];
-
+// Main game loop
 function gameLoop() {
-    ctx.clear();
+    // Clear screen
+    ctx.fillStyle = '#001122';
+    ctx.fillCanvas();
     
-    // Efficient batched rendering
-    bullets.forEach(bullet => bullet.render(ctx));
-    enemies.forEach(enemy => enemy.render(ctx));
-    particles.forEach(particle => particle.render(ctx));
+    // Update
+    player.update();
+    handleShooting();
+    
+    // Update bullets (remove dead ones)
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        if (!bullets[i].update()) {
+            bullets.splice(i, 1);
+        }
+    }
+    
+    // Render
+    player.render();
+    bullets.forEach(bullet => bullet.render());
+    
+    // UI
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '16px Arial';
+    ctx.fillText(`Bullets: ${bullets.length}`, 10, 20);
     
     requestAnimationFrame(gameLoop);
 }
+
+gameLoop();
 ```
 
 ### 2. Data Visualizations & Charts
@@ -99,41 +169,124 @@ Hardware-accelerated charts and graphs:
 
 ```javascript
 const ctx = new WebGLCanvas(canvas, {
-    enableFullscreen: true  // Great for presentation mode
+    enableFullscreen: true
 });
 
-// Real-time stock chart with thousands of data points
-function drawStockChart(data) {
-    ctx.clear();
+// Generate sample stock data
+function generateStockData(days = 200) {
+    const data = [];
+    let price = 100;
+    let volume = 1000000;
     
-    // Background
-    ctx.fillStyle = '#1e1e1e';
-    ctx.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < days; i++) {
+        const change = (Math.random() - 0.5) * 10;
+        price = Math.max(10, price + change);
+        volume = Math.max(500000, volume + (Math.random() - 0.5) * 200000);
+        
+        data.push({
+            date: new Date(Date.now() - (days - i) * 24 * 60 * 60 * 1000),
+            price: price,
+            volume: volume,
+            change: change
+        });
+    }
     
-    // Price line with thousands of points (batched efficiently)
-    ctx.strokeStyle = '#00ff88';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    
-    data.forEach((point, i) => {
-        const x = (i / data.length) * 800;
-        const y = 600 - (point.price / maxPrice) * 500;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    
-    // Volume bars (hundreds of rectangles in single batch)
-    data.forEach((point, i) => {
-        const x = (i / data.length) * 800;
-        const height = (point.volume / maxVolume) * 100;
-        ctx.fillStyle = point.change > 0 ? '#00ff88' : '#ff4444';
-        ctx.fillRect(x, 500, 2, height);
-    });
+    return data;
 }
 
-// Updates at 60fps with smooth animations
-setInterval(() => updateData().then(drawStockChart), 16);
+const stockData = generateStockData();
+const maxPrice = Math.max(...stockData.map(d => d.price));
+const maxVolume = Math.max(...stockData.map(d => d.volume));
+
+function drawStockChart(data) {
+    // Clear background
+    ctx.fillStyle = '#1e1e1e';
+    ctx.fillCanvas();
+    
+    const chartWidth = 800;
+    const chartHeight = 400;
+    const padding = 50;
+    
+    // Draw grid lines
+    ctx.strokeStyle = '#333333';
+    ctx.lineWidth = 1;
+    
+    // Horizontal grid lines (price levels)
+    for (let i = 0; i <= 10; i++) {
+        const y = padding + (chartHeight - padding * 2) * (i / 10);
+        ctx.drawLine(padding, y, chartWidth - padding, y);
+        
+        // Price labels
+        const price = maxPrice * (1 - i / 10);
+        ctx.fillStyle = '#888888';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'right';
+        ctx.fillText(price.toFixed(0), padding - 5, y + 4);
+    }
+    
+    // Vertical grid lines (time)
+    for (let i = 0; i <= 5; i++) {
+        const x = padding + (chartWidth - padding * 2) * (i / 5);
+        ctx.drawLine(x, padding, x, chartHeight - padding);
+    }
+    
+    // Draw price line
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 2;
+    
+    for (let i = 1; i < data.length; i++) {
+        const x1 = padding + ((i - 1) / (data.length - 1)) * (chartWidth - padding * 2);
+        const y1 = padding + (1 - data[i - 1].price / maxPrice) * (chartHeight - padding * 2);
+        const x2 = padding + (i / (data.length - 1)) * (chartWidth - padding * 2);
+        const y2 = padding + (1 - data[i].price / maxPrice) * (chartHeight - padding * 2);
+        
+        ctx.drawLine(x1, y1, x2, y2);
+    }
+    
+    // Draw volume bars at bottom
+    const volumeHeight = 80;
+    const volumeY = chartHeight - padding - volumeHeight;
+    
+    data.forEach((point, i) => {
+        const x = padding + (i / (data.length - 1)) * (chartWidth - padding * 2);
+        const height = (point.volume / maxVolume) * volumeHeight;
+        const barWidth = Math.max(1, (chartWidth - padding * 2) / data.length);
+        
+        ctx.fillStyle = point.change > 0 ? '#00ff8844' : '#ff444444';
+        ctx.fillRect(x - barWidth / 2, volumeY + volumeHeight - height, barWidth, height);
+    });
+    
+    // Chart title
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Stock Price Chart', chartWidth / 2, 30);
+    
+    // Current price display
+    const currentPrice = data[data.length - 1].price;
+    const priceChange = data[data.length - 1].change;
+    ctx.font = '18px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Current: $${currentPrice.toFixed(2)}`, padding, chartHeight - 10);
+    
+    ctx.fillStyle = priceChange > 0 ? '#00ff88' : '#ff4444';
+    ctx.fillText(`Change: ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)}`, padding + 200, chartHeight - 10);
+}
+
+// Animate the chart
+let dataIndex = 50;
+function animateChart() {
+    if (dataIndex < stockData.length) {
+        drawStockChart(stockData.slice(0, dataIndex));
+        dataIndex++;
+    } else {
+        drawStockChart(stockData);
+    }
+    
+    setTimeout(() => requestAnimationFrame(animateChart), 50);
+}
+
+animateChart();
 ```
 
 ### 3. Particle Systems & Effects
@@ -141,49 +294,91 @@ setInterval(() => updateData().then(drawStockChart), 16);
 Complex particle effects with thousands of particles:
 
 ```javascript
-class ParticleSystem {
-    constructor(ctx) {
-        this.ctx = ctx;
-        this.particles = [];
-    }
+function createParticle(x, y) {
+    return {
+        x: x,
+        y: y,
+        vx: (Math.random() - 0.5) * 10,
+        vy: (Math.random() - 0.5) * 10,
+        life: 1.0,
+        decay: Math.random() * 0.02 + 0.01,
+        size: Math.random() * 3 + 1,
+        hue: Math.random() * 360
+    };
+}
+
+function updateParticle(particle) {
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vx *= 0.98; // Air resistance
+    particle.vy *= 0.98;
+    particle.vy += 0.1; // Gravity
+    particle.life -= particle.decay;
     
-    emit(x, y, count = 50) {
-        for (let i = 0; i < count; i++) {
-            this.particles.push({
-                x, y,
-                vx: (Math.random() - 0.5) * 10,
-                vy: (Math.random() - 0.5) * 10,
-                life: 1.0,
-                decay: Math.random() * 0.02 + 0.01
-            });
-        }
-    }
-    
-    update() {
-        this.particles = this.particles.filter(p => {
-            p.x += p.vx;
-            p.y += p.vy;
-            p.life -= p.decay;
-            return p.life > 0;
-        });
-    }
-    
-    render() {
-        // All particles rendered in single batched call
-        this.particles.forEach(p => {
-            this.ctx.globalAlpha = p.life;
-            this.ctx.fillStyle = `hsl(${p.life * 60}, 100%, 50%)`;
-            this.ctx.fillCircle(p.x, p.y, p.life * 3);
-        });
-        this.ctx.globalAlpha = 1;
+    return particle.life > 0;
+}
+
+function renderParticle(particle, ctx) {
+    ctx.globalAlpha = particle.life;
+    ctx.fillStyle = `hsl(${particle.hue + particle.life * 60}, 100%, 50%)`;
+    ctx.fillCircle(particle.x, particle.y, particle.size * particle.life);
+}
+
+// Particle system
+let particles = [];
+
+function emitParticles(x, y, count = 50) {
+    for (let i = 0; i < count; i++) {
+        particles.push(createParticle(x, y));
     }
 }
 
-// Handles thousands of particles smoothly
-const particles = new ParticleSystem(ctx);
-canvas.addEventListener('click', (e) => {
-    particles.emit(e.offsetX, e.offsetY, 200);
+function updateParticles() {
+    // Update and filter out dead particles
+    particles = particles.filter(particle => updateParticle(particle));
+}
+
+function renderParticles(ctx) {
+    particles.forEach(particle => renderParticle(particle, ctx));
+    ctx.globalAlpha = 1; // Reset global alpha
+}
+
+// Mouse interaction
+let mouseX = 400, mouseY = 300;
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = e.clientX - rect.left;
+    mouseY = e.clientY - rect.top;
 });
+
+canvas.addEventListener('click', (e) => {
+    emitParticles(mouseX, mouseY, 200);
+});
+
+// Main loop
+function particleLoop() {
+    // Clear with fade effect
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+    ctx.fillCanvas();
+    
+    // Continuously emit particles at mouse position
+    if (Math.random() < 0.3) {
+        emitParticles(mouseX, mouseY, 5);
+    }
+    
+    updateParticles();
+    renderParticles(ctx);
+    
+    // Display stats
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '16px Arial';
+    ctx.fillText(`Particles: ${particles.length}`, 10, 20);
+    ctx.fillText('Click to emit burst, move mouse to emit trail', 10, 40);
+    
+    requestAnimationFrame(particleLoop);
+}
+
+particleLoop();
 ```
 
 ### 4. Interactive Art & Animations
@@ -191,39 +386,65 @@ canvas.addEventListener('click', (e) => {
 Creative coding with smooth animations:
 
 ```javascript
-function drawFlowField() {
-    ctx.clear();
-    
+const ctx = new WebGLCanvas(canvas);
+
+function drawFlowField(ctx) {
     const time = Date.now() * 0.001;
     
-    // Dynamic gradient background
+    // Clear with gradient background
     const gradient = ctx.createRadialGradient(400, 300, 0, 400, 300, 400);
-    gradient.addColorStop(0, `hsl(${time * 10}, 70%, 20%)`);
-    gradient.addColorStop(1, `hsl(${time * 15}, 50%, 10%)`);
+    
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 800, 600);
+    ctx.fillCanvas();
     
     // Flow field visualization
-    for (let x = 0; x < 800; x += 20) {
-        for (let y = 0; y < 600; y += 20) {
-            const angle = Math.sin(x * 0.01 + time) * Math.cos(y * 0.01 + time) * Math.PI;
-            const length = 10;
+    const gridSize = 20;
+    const lineLength = 15;
+    
+    for (let x = 0; x < 800; x += gridSize) {
+        for (let y = 0; y < 600; y += gridSize) {
+            // Calculate flow direction using noise-like function
+            const angle = Math.sin(x * 0.01 + time) * Math.cos(y * 0.01 + time) * Math.PI * 2;
+            const intensity = (Math.sin(x * 0.005 + time * 0.5) + 1) * 0.5;
             
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(angle);
-            ctx.strokeStyle = `hsla(${(angle * 180 / Math.PI + 180)}, 100%, 70%, 0.8)`;
-            ctx.drawLine(0, 0, length, 0);
-            ctx.restore();
+            // Calculate line endpoints
+            const endX = x + Math.cos(angle) * lineLength * intensity;
+            const endY = y + Math.sin(angle) * lineLength * intensity;
+            
+            // Set color based on angle and position
+            const hue = (angle * 180 / Math.PI + 180) % 360;
+            const alpha = 0.3 + intensity * 0.7;
+            
+            ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${alpha})`;
+            ctx.lineWidth = 1 + intensity * 2;
+            ctx.drawLine(x, y, endX, endY);
         }
     }
+    
+    // Add floating orbs
+    for (let i = 0; i < 5; i++) {
+        const orbX = 400 + Math.sin(time * 0.5 + i * 2) * 200;
+        const orbY = 300 + Math.cos(time * 0.3 + i * 1.5) * 150;
+        const orbSize = 10 + Math.sin(time * 2 + i) * 5;
+        
+        const orbGradient = ctx.createRadialGradient(orbX, orbY, 0, orbX, orbY, orbSize * 2);
+		
+        ctx.fillStyle = orbGradient;
+        ctx.fillCircle(orbX, orbY, orbSize * 2);
+    }
+    
+    // Center attraction point
+    const centerPulse = 5 + Math.sin(time * 4) * 3;
+    ctx.fillStyle = `hsla(${time * 60}, 100%, 90%, 0.9)`;
+    ctx.fillCircle(400, 300, centerPulse);
 }
 
-// Smooth 60fps animation with hundreds of elements
-function animate() {
-    drawFlowField();
-    requestAnimationFrame(animate);
+function flowFieldAnimation() {
+    drawFlowField(ctx);
+    requestAnimationFrame(flowFieldAnimation);
 }
+
+flowFieldAnimation();
 ```
 
 ### 5. Custom Shader Effects
@@ -231,113 +452,376 @@ function animate() {
 Advanced GPU effects with custom shaders:
 
 ```javascript
-// Plasma effect shader
-const plasmaShader = {
-    vertex: `
-        attribute vec2 a_position;
-        uniform vec2 u_resolution;
-        varying vec2 v_uv;
-        
-        void main() {
-            vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
-            normalized.y = -normalized.y;
-            gl_Position = vec4(normalized, 0, 1);
-            v_uv = a_position / u_resolution;
-        }
-    `,
-    fragment: `
-        precision mediump float;
-        uniform float u_time;
-        varying vec2 v_uv;
-        
-        void main() {
-            vec2 p = v_uv * 8.0;
-            float v = sin(p.x + u_time) + sin(p.y + u_time) + 
-                     sin(p.x + p.y + u_time) + sin(length(p) + u_time);
-            vec3 color = vec3(sin(v), sin(v + 1.0), sin(v + 2.0)) * 0.5 + 0.5;
-            gl_FragColor = vec4(color, 1.0);
-        }
-    `
-};
+const ctx = new WebGLCanvas(canvas);
 
-ctx.addShader('plasma', plasmaShader.vertex, plasmaShader.fragment);
-// Use for full-screen effects or selective object rendering
+// Add a plasma effect shader
+const plasmaVertexShader = `
+    attribute vec2 a_position;
+    uniform vec2 u_resolution;
+    varying vec2 v_uv;
+    
+    void main() {
+        vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+        normalized.y = -normalized.y;
+        gl_Position = vec4(normalized, 0, 1);
+        v_uv = a_position / u_resolution;
+    }
+`;
+
+const plasmaFragmentShader = `
+    precision mediump float;
+    uniform float u_time;
+    uniform vec2 u_resolution;
+    varying vec2 v_uv;
+    
+    void main() {
+        vec2 p = (v_uv - 0.5) * 8.0;
+        float time = u_time * 0.5;
+        
+        float v = sin(p.x + time) + 
+                  sin(p.y + time) + 
+                  sin(p.x + p.y + time) + 
+                  sin(length(p) + time);
+                  
+        vec3 color = vec3(
+            sin(v) * 0.5 + 0.5,
+            sin(v + 2.0) * 0.5 + 0.5,
+            sin(v + 4.0) * 0.5 + 0.5
+        );
+        
+        gl_FragColor = vec4(color, 1.0);
+    }
+`;
+
+// Add the shader to WebGL Canvas
+ctx.addShader('plasma', plasmaVertexShader, plasmaFragmentShader);
+
+function drawPlasmaEffect() {
+    // Create fullscreen quad
+    const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
+    
+    // Draw with plasma shader
+    ctx.drawWithShader('plasma', vertices, indices, {
+        u_time: Date.now() * 0.001,
+        u_resolution: [canvas.width, canvas.height]
+    });
+    
+    requestAnimationFrame(drawPlasmaEffect);
+}
+
+drawPlasmaEffect();
 ```
 
-### 6. Game UI Systems
-
-Responsive game interfaces with hardware acceleration:
+**Additional Shader Examples:**
 
 ```javascript
-class GameUI {
-    constructor(ctx) {
-        this.ctx = ctx;
-        this.buttons = [];
-        this.healthBar = { current: 100, max: 100 };
-        this.score = 0;
-    }
+const ctx = new WebGLCanvas(canvas);
+
+// Ripple effect shader with enhanced visibility
+const rippleVertexShader = `
+    precision mediump float;
+    attribute vec2 a_position;
+    uniform vec2 u_resolution;
+    varying vec2 v_uv;
     
-    addButton(x, y, width, height, text, callback) {
-        this.buttons.push({ x, y, width, height, text, callback });
+    void main() {
+        vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+        normalized.y = -normalized.y;
+        gl_Position = vec4(normalized, 0, 1);
+        v_uv = a_position / u_resolution;
     }
+`;
+
+const rippleFragmentShader = `
+    precision mediump float;
+    uniform float u_time;
+    uniform vec2 u_resolution;
+    uniform vec2 u_mouse;
+    varying vec2 v_uv;
     
-    render() {
-        // Health bar with gradient
-        const healthPercent = this.healthBar.current / this.healthBar.max;
-        const gradient = this.ctx.createLinearGradient(10, 10, 210, 10);
-        gradient.addColorStop(0, healthPercent > 0.3 ? '#00ff00' : '#ff0000');
-        gradient.addColorStop(1, healthPercent > 0.3 ? '#88ff88' : '#ff8888');
+    void main() {
+        vec2 center = u_mouse / u_resolution;
+        float dist = distance(v_uv, center);
         
-        this.ctx.fillStyle = gradient;
-        this.ctx.fillRect(10, 10, 200 * healthPercent, 20);
+        // More visible ripple waves (increased amplitude and adjusted decay)
+        float ripple1 = sin(dist * 30.0 - u_time * 6.0) * exp(-dist * 2.0);  // Reduced decay from 3.0 to 2.0 for longer reach
+        float ripple2 = sin(dist * 45.0 - u_time * 9.0) * exp(-dist * 3.0);  // Adjusted for balance
+        float ripple3 = sin(dist * 60.0 - u_time * 12.0) * exp(-dist * 4.0);
+
+        // Increase ripple amplitude for visibility (boosted from 0.5 to 1.0)
+        float totalRipple = (ripple1 + ripple2 * 0.6 + ripple3 * 0.3) * 1.0;
+
+        // Distort coordinates more dramatically (increased multiplier from 0.1 to 0.3)
+        vec2 direction = normalize(v_uv - center);
+        vec2 distortedUV = v_uv + direction * totalRipple * 0.3;
         
-        // Score display
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.font = '24px Arial';
-        this.ctx.fillText(`Score: ${this.score}`, 10, 60);
+        // Make checkerboard larger and more responsive to distortion
+        vec2 grid = floor(distortedUV * 10.0);
+        float checker = mod(grid.x + grid.y, 2.0);
         
-        // Buttons with hover effects
-        this.buttons.forEach(btn => {
-            this.ctx.fillStyle = btn.hovered ? '#4488ff' : '#2266dd';
-            this.ctx.fillRect(btn.x, btn.y, btn.width, btn.height);
-            
-            this.ctx.fillStyle = '#ffffff';
-            this.ctx.textAlign = 'center';
-            this.ctx.fillText(btn.text, btn.x + btn.width/2, btn.y + btn.height/2);
-        });
+        // Enhanced water-like colors with more contrast
+        vec3 waterColor1 = vec3(0.1, 0.3, 0.9);
+        vec3 waterColor2 = vec3(0.0, 0.7, 1.0);
+        vec3 foamColor = vec3(1.0, 1.0, 1.0);
+        
+        vec3 baseColor = mix(waterColor1, waterColor2, checker);
+        
+        // More pronounced foam at ripple peaks
+        float foam = smoothstep(0.2, 0.9, abs(ripple1));
+        vec3 finalColor = mix(baseColor, foamColor, foam * 0.8);
+        
+        // Enhanced shimmer effect (increased range)
+        float shimmer = sin(dist * 100.0 + u_time * 10.0) * 0.5 + 0.7;  // From 0.3 to 0.5 for more variation
+        finalColor *= shimmer;
+
+        // Add ripple intensity as brightness (increased multiplier from 3.0 to 5.0)
+        finalColor += abs(totalRipple) * 5.0;
+        
+        gl_FragColor = vec4(finalColor, 1.0);
     }
+`;
+
+// Add the shader
+ctx.addShader('ripple', rippleVertexShader, rippleFragmentShader);
+
+// Mouse position tracking
+let mouseX = canvas.width * 0.5;
+let mouseY = canvas.height * 0.5;
+
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    mouseX = (e.clientX - rect.left) * scaleX;
+    mouseY = (e.clientY - rect.top) * scaleY;
+});
+
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    mouseX = (e.clientX - rect.left) * scaleX;
+    mouseY = (e.clientY - rect.top) * scaleY;
+});
+
+function drawRippleEffect() {
+    // Create fullscreen quad
+    const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
+    
+    // Draw with ripple shader
+    ctx.drawWithShader('ripple', vertices, indices, {
+        u_time: Date.now() * 0.005,
+        u_resolution: [canvas.width, canvas.height],
+        u_mouse: [mouseX, mouseY]
+    });
+    
+    requestAnimationFrame(drawRippleEffect);
 }
+
+// Start the animation
+drawRippleEffect();
 ```
 
-### 7. Scientific Visualizations
+**Mandelbrot Set Visualization:**
+
+```javascript
+const ctx = new WebGLCanvas(canvas);
+
+const mandelbrotVertexShader = `
+    attribute vec2 a_position;
+    uniform vec2 u_resolution;
+    varying vec2 v_uv;
+    
+    void main() {
+        vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+        normalized.y = -normalized.y;
+        gl_Position = vec4(normalized, 0, 1);
+        v_uv = a_position / u_resolution;
+    }
+`;
+
+const mandelbrotFragmentShader = `
+    precision mediump float;
+    uniform float u_time;
+    uniform vec2 u_resolution;
+    uniform float u_zoom;
+    uniform vec2 u_center;
+    varying vec2 v_uv;
+    
+    vec2 complex_mult(vec2 a, vec2 b) {
+        return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+    }
+    
+    float mandelbrot(vec2 c) {
+        vec2 z = vec2(0.0);
+        float iterations = 0.0;
+        
+        for (int i = 0; i < 100; i++) {
+            if (dot(z, z) > 4.0) break;
+            z = complex_mult(z, z) + c;
+            iterations++;
+        }
+        
+        return iterations / 100.0;
+    }
+    
+    void main() {
+        vec2 uv = (v_uv - 0.5) * 4.0 / u_zoom + u_center;
+        float m = mandelbrot(uv);
+        
+        vec3 color = vec3(
+            sin(m * 6.28 + u_time),
+            sin(m * 6.28 + u_time + 2.0),
+            sin(m * 6.28 + u_time + 4.0)
+        ) * 0.5 + 0.5;
+        
+        if (m > 0.99) color = vec3(0.0);
+        
+        gl_FragColor = vec4(color, 1.0);
+    }
+`;
+
+ctx.addShader('mandelbrot', mandelbrotVertexShader, mandelbrotFragmentShader);
+
+let zoom = 1.0;
+let centerX = -0.5, centerY = 0.0;
+
+function drawMandelbrot() {
+    const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
+    
+    // Animate zoom
+    zoom *= 1.01;
+    if (zoom > 100) zoom = 1.0;
+    
+    ctx.drawWithShader('mandelbrot', vertices, indices, {
+        u_time: Date.now() * 0.001,
+        u_resolution: [canvas.width, canvas.height],
+        u_zoom: zoom,
+        u_center: [centerX, centerY]
+    });
+    
+    requestAnimationFrame(drawMandelbrot);
+}
+
+drawMandelbrot();
+```
+
+### 6. Scientific Visualizations
 
 Complex data representation with real-time updates:
 
 ```javascript
-function drawHeatmap(data, width, height) {
-    // Create color map texture
-    const colorMap = ctx.createLinearGradient(0, 0, 0, height);
-    colorMap.addColorStop(0, '#000080');    // Blue (cold)
-    colorMap.addColorStop(0.25, '#0080ff'); 
-    colorMap.addColorStop(0.5, '#00ff80');  // Green (medium)
-    colorMap.addColorStop(0.75, '#ff8000'); 
-    colorMap.addColorStop(1, '#ff0000');    // Red (hot)
+const ctx = new WebGLCanvas(canvas);
+
+function generateHeatmapData(width, height) {
+    const data = new Array(width * height);
+    const time = Date.now() * 0.001;
     
-    // Render data points efficiently
+    for (let x = 0; x < width; x++) {
+        for (let y = 0; y < height; y++) {
+            const index = y * width + x;
+            
+            // Generate interesting pattern
+            const nx = x / width - 0.5;
+            const ny = y / height - 0.5;
+            const dist = Math.sqrt(nx * nx + ny * ny);
+            
+            const value = Math.sin(dist * 20 + time) * 
+                         Math.cos(nx * 10 + time * 0.5) * 
+                         Math.cos(ny * 10 + time * 0.3);
+            
+            data[index] = (value + 1) * 0.5; // Normalize to 0-1
+        }
+    }
+    
+    return data;
+}
+
+function drawHeatmap(data, width, height) {
     const cellWidth = 800 / width;
     const cellHeight = 600 / height;
+    
+    // Create color gradient for heatmap
+    const colors = [
+        [0, 0, 0.5, 1],      // Dark blue (cold)
+        [0, 0.5, 1, 1],      // Blue
+        [0, 1, 0.5, 1],      // Green
+        [1, 1, 0, 1],        // Yellow
+        [1, 0.5, 0, 1],      // Orange
+        [1, 0, 0, 1]         // Red (hot)
+    ];
+    
+    function getHeatmapColor(value) {
+        const scaledValue = value * (colors.length - 1);
+        const index = Math.floor(scaledValue);
+        const t = scaledValue - index;
+        
+        if (index >= colors.length - 1) return colors[colors.length - 1];
+        if (index < 0) return colors[0];
+        
+        const color1 = colors[index];
+        const color2 = colors[index + 1];
+        
+        return [
+            color1[0] + (color2[0] - color1[0]) * t,
+            color1[1] + (color2[1] - color1[1]) * t,
+            color1[2] + (color2[2] - color1[2]) * t,
+            1
+        ];
+    }
     
     for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
             const value = data[y * width + x];
-            const intensity = value / maxValue;
+            const color = getHeatmapColor(value);
             
-            ctx.globalAlpha = intensity;
-            ctx.fillStyle = colorMap;
+            ctx.fillStyle = `rgba(${Math.floor(color[0] * 255)}, ${Math.floor(color[1] * 255)}, ${Math.floor(color[2] * 255)}, ${color[3]})`;
             ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
         }
     }
+    
+    // Draw color legend
+    const legendWidth = 20;
+    const legendHeight = 200;
+    const legendX = 750;
+    const legendY = 50;
+    
+    for (let i = 0; i < legendHeight; i++) {
+        const value = 1 - (i / legendHeight);
+        const color = getHeatmapColor(value);
+        
+        ctx.fillStyle = `rgba(${Math.floor(color[0] * 255)}, ${Math.floor(color[1] * 255)}, ${Math.floor(color[2] * 255)}, ${color[3]})`;
+        ctx.fillRect(legendX, legendY + i, legendWidth, 1);
+    }
+    
+    // Legend labels
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText('Hot', legendX + 25, legendY + 10);
+    ctx.fillText('Cold', legendX + 25, legendY + legendHeight - 5);
+    
+    // Title
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Real-time Heat Map Visualization', 400, 30);
 }
+
+// Animation loop
+const heatmapWidth = 80;
+const heatmapHeight = 60;
+
+function heatmapAnimation() {
+    ctx.fillStyle = '#000000';
+    ctx.fillCanvas();
+    
+    const data = generateHeatmapData(heatmapWidth, heatmapHeight);
+    drawHeatmap(data, heatmapWidth, heatmapHeight);
+    
+    requestAnimationFrame(heatmapAnimation);
+}
+
+heatmapAnimation();
 ```
 
 ## 🎯 Complete API Reference
