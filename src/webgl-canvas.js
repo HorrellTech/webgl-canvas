@@ -3,8 +3,9 @@
  * Easy to use, GPU-accelerated 2D graphics library with optimized batching
  */
 class WebGLCanvas {
-    constructor(canvas, options = {}) {
+    constructor(canvas, useWebGL = true, options = {}) {
         this.canvas = canvas;
+        this.useWebGL = useWebGL;
 
         // Handle pixel scaling options
         this.options = {
@@ -22,10 +23,18 @@ class WebGLCanvas {
         this.width = this.canvas.width;
         this.height = this.canvas.height;
 
-        // WebGL context
-        this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        if (!this.gl) {
-            throw new Error('WebGL not supported');
+        if(!this.useWebGL) {
+            // 2D context
+            this.ctx = canvas.getContext('2d');
+            if (!this.ctx) {
+                throw new Error('2D context not supported');
+            }
+        } else {
+            // WebGL context
+            this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (!this.gl) {
+                throw new Error('WebGL not supported');
+            }
         }
 
         // State management
@@ -1725,7 +1734,7 @@ class WebGLCanvas {
     drawImage(image, ...args) {
         // Check if image is loaded
         if (!image || !image.complete || image.naturalWidth === 0) {
-            console.warn('Image not loaded or invalid');
+            //console.warn('Image not loaded or invalid');
             return;
         }
 

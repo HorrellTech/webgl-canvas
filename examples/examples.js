@@ -177,11 +177,22 @@ function gameLoop() {
 }
 
 function generateFood() {
+    let attempts = 0;
+    const maxAttempts = 1000; // Prevent infinite loop if snake fills the board
+    
     do {
         food = {
             x: Math.floor(Math.random() * tileCount),
             y: Math.floor(Math.random() * tileCount)
         };
+        attempts++;
+        
+        // If we've tried too many times, force a position (e.g., top-left corner)
+        if (attempts >= maxAttempts) {
+            food = { x: 0, y: 0 }; // Fallback: place in corner
+            console.warn("Could not find free spot for food; placing in corner.");
+            break;
+        }
     } while (snake.some(segment => segment.x === food.x && segment.y === food.y));
 }
 
@@ -291,181 +302,6 @@ window.snakeGameCleanup = function() {
     document.removeEventListener('keydown', handleKeyDown);
     canvas.removeEventListener('click', handleCanvasClick);
     gameRunning = false;
-};`
-    },
-
-    drawingApp: {
-        name: "Drawing App",
-        code: `// Simple Drawing App - Clean up previous instances first
-if (window.drawingAppCleanup) {
-    window.drawingAppCleanup();
-}
-
-const ctx = new WebGLCanvas(canvas);
-// const ctx = canvas.getContext('2d'); // Uncomment for regular canvas
-
-let isDrawing = false;
-let lastX = 0;
-let lastY = 0;
-let brushSize = 5;
-let currentColor = '#000000';
-
-// Color palette
-const colors = ['#000000', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffffff'];
-
-function getEventPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    if (e.touches) {
-        return {
-            x: e.touches[0].clientX - rect.left,
-            y: e.touches[0].clientY - rect.top
-        };
-    }
-    return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
-    };
-}
-
-function startDrawing(e) {
-    const pos = getEventPos(e);
-    
-    // Check if clicking on color palette
-    if (pos.y >= 10 && pos.y <= 35) {
-        const colorIndex = Math.floor((pos.x - 10) / 30);
-        if (colorIndex >= 0 && colorIndex < colors.length) {
-            currentColor = colors[colorIndex];
-            return;
-        }
-    }
-    
-    isDrawing = true;
-    lastX = pos.x;
-    lastY = pos.y;
-    
-    if (e.preventDefault) e.preventDefault();
-}
-
-function draw(e) {
-    if (!isDrawing) return;
-    
-    const pos = getEventPos(e);
-    
-    ctx.strokeStyle = currentColor;
-    ctx.lineWidth = brushSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    if (ctx.drawLine) {
-        ctx.drawLine(lastX, lastY, pos.x, pos.y);
-    } else {
-        ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
-        ctx.lineTo(pos.x, pos.y);
-        ctx.stroke();
-    }
-    
-    lastX = pos.x;
-    lastY = pos.y;
-    
-    if (ctx.flush) ctx.flush();
-    if (e.preventDefault) e.preventDefault();
-}
-
-function stopDrawing(e) {
-    isDrawing = false;
-    if (e.preventDefault) e.preventDefault();
-}
-
-// Keyboard shortcuts
-function handleKeyDown(e) {
-    if (e.key === 'c' || e.key === 'C') {
-        // Clear canvas
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Redraw palette
-        colors.forEach((color, index) => {
-            ctx.fillStyle = color;
-            ctx.fillRect(10 + index * 30, 10, 25, 25);
-            ctx.strokeStyle = '#ccc';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(10 + index * 30, 10, 25, 25);
-        });
-        
-        // Redraw instructions
-        ctx.fillStyle = '#333';
-        ctx.font = '12px Arial';
-        if (ctx.fillText) {
-            ctx.fillText('Press C to clear, +/- to change brush size', 10, canvas.height - 10);
-        }
-        
-        if (ctx.flush) ctx.flush();
-    } else if (e.key === '+' || e.key === '=') {
-        brushSize = Math.min(20, brushSize + 1);
-    } else if (e.key === '-') {
-        brushSize = Math.max(1, brushSize - 1);
-    }
-}
-
-// Mouse events
-canvas.addEventListener('mousedown', startDrawing);
-canvas.addEventListener('mousemove', draw);
-canvas.addEventListener('mouseup', stopDrawing);
-canvas.addEventListener('mouseout', stopDrawing);
-
-// Touch events
-canvas.addEventListener('touchstart', startDrawing);
-canvas.addEventListener('touchmove', draw);
-canvas.addEventListener('touchend', stopDrawing);
-
-// Keyboard events
-document.addEventListener('keydown', handleKeyDown);
-
-// Initialize with white background
-ctx.fillStyle = '#ffffff';
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-// Draw color palette
-colors.forEach((color, index) => {
-    ctx.fillStyle = color;
-    ctx.fillRect(10 + index * 30, 10, 25, 25);
-    // Add border for visibility
-    ctx.strokeStyle = '#ccc';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(10 + index * 30, 10, 25, 25);
-});
-
-// Draw brush size indicator
-ctx.fillStyle = '#333333';
-if (ctx.fillCircle) {
-    ctx.fillCircle(50, 50, brushSize);
-} else {
-    ctx.beginPath();
-    ctx.arc(50, 50, brushSize, 0, Math.PI * 2);
-    ctx.fill();
-}
-
-// Instructions
-ctx.fillStyle = '#333';
-ctx.font = '12px Arial';
-if (ctx.fillText) {
-    ctx.fillText('Press C to clear, +/- to change brush size', 10, canvas.height - 10);
-}
-
-if (ctx.flush) ctx.flush();
-
-// Store cleanup function globally
-window.drawingAppCleanup = function() {
-    canvas.removeEventListener('mousedown', startDrawing);
-    canvas.removeEventListener('mousemove', draw);
-    canvas.removeEventListener('mouseup', stopDrawing);
-    canvas.removeEventListener('mouseout', stopDrawing);
-    canvas.removeEventListener('touchstart', startDrawing);
-    canvas.removeEventListener('touchmove', draw);
-    canvas.removeEventListener('touchend', stopDrawing);
-    document.removeEventListener('keydown', handleKeyDown);
-    isDrawing = false;
 };`
     },
 
