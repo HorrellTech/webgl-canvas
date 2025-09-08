@@ -3,7 +3,7 @@
  * Easy to use, GPU-accelerated 2D graphics library with optimized batching
  */
 class WebGLCanvas {
-    constructor(canvas, useWebGL = true, options = {}) {
+    constructor(canvas, options = {}, useWebGL = true) {
         this.canvas = canvas;
         this.useWebGL = useWebGL;
 
@@ -23,7 +23,7 @@ class WebGLCanvas {
         this.width = this.canvas.width;
         this.height = this.canvas.height;
 
-        if(!this.useWebGL) {
+        if (!this.useWebGL) {
             // 2D context
             this.ctx = canvas.getContext('2d');
             if (!this.ctx) {
@@ -92,25 +92,27 @@ class WebGLCanvas {
         this.currentImageBatch = null;
         this.imageBatchTexture = null;
 
-        // Initialize WebGL
-        this.init();
+        if (this.useWebGL) {
+            // Initialize WebGL
+            this.init();
 
-        // Create built-in shaders
-        this.shaders = {};
-        this.createBuiltInShaders();
+            // Create built-in shaders
+            this.shaders = {};
+            this.createBuiltInShaders();
 
-        // Create batch buffers
-        this.createBatchBuffers();
+            // Create batch buffers
+            this.createBatchBuffers();
 
-        // Layer system
-        /*this.layers = new Map(); // Map of layer -> batch data
-        this.currentLayer = 0;
-        this.maxLayers = options.maxLayers || 100;*/
+            // Layer system
+            /*this.layers = new Map(); // Map of layer -> batch data
+            this.currentLayer = 0;
+            this.maxLayers = options.maxLayers || 100;*/
 
-        // Set initial viewport
-        this.gl.viewport(0, 0, this.width, this.height);
-        this.gl.enable(this.gl.BLEND);
-        this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+            // Set initial viewport
+            this.gl.viewport(0, 0, this.width, this.height);
+            this.gl.enable(this.gl.BLEND);
+            this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+        }
 
         // Setup fullscreen if enabled
         if (this.options.enableFullscreen) {
@@ -298,6 +300,12 @@ class WebGLCanvas {
         gl.attachShader(program, vertexShader);
         gl.attachShader(program, fragmentShader);
         gl.linkProgram(program);
+
+        // Log any warnings or info even if linking succeeds
+        const log = gl.getProgramInfoLog(program);
+        if (log) {
+            console.warn('Shader program link log:', log);
+        }
 
         if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
             throw new Error('Shader program failed to link: ' + gl.getProgramInfoLog(program));
@@ -744,9 +752,13 @@ class WebGLCanvas {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, batch.currentTexture);
 
-        // Set texture uniform
+        // Set texture uniform - check if it exists
         const textureLocation = gl.getUniformLocation(program, 'u_texture');
-        gl.uniform1i(textureLocation, 0);
+        if (textureLocation !== null) {
+            gl.uniform1i(textureLocation, 0);
+        } else {
+            //console.warn('u_texture uniform not found in image shader, but continuing...');
+        }
 
         // Upload and bind vertex data
         gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
@@ -756,6 +768,9 @@ class WebGLCanvas {
         if (positionLoc >= 0) {
             gl.enableVertexAttribArray(positionLoc);
             gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        } else {
+            //console.error('Required attribute a_position not found in image shader');
+            return;
         }
 
         // Upload and bind texture coordinate data
@@ -766,6 +781,9 @@ class WebGLCanvas {
         if (texCoordLoc >= 0) {
             gl.enableVertexAttribArray(texCoordLoc);
             gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
+        } else {
+            //console.error('Required attribute a_texCoord not found in image shader');
+            return;
         }
 
         // Upload and bind index data
@@ -774,12 +792,12 @@ class WebGLCanvas {
 
         // Set uniforms
         const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-        if (resolutionLoc) {
+        if (resolutionLoc !== null) {
             gl.uniform2f(resolutionLoc, this.width, this.height);
         }
 
         const globalAlphaLoc = gl.getUniformLocation(program, 'u_globalAlpha');
-        if (globalAlphaLoc) {
+        if (globalAlphaLoc !== null) {
             gl.uniform1f(globalAlphaLoc, this.state.globalAlpha);
         }
 
@@ -1037,6 +1055,11 @@ class WebGLCanvas {
         * @param {string|Array} color - Color value
     */
     set fillStyle(color) {
+        if (!this.useWebGL) {
+            this.ctx.fillStyle = color;
+            return;
+        }
+
         this.state.fillStyle = this.parseColor(color);
     }
 
@@ -1046,6 +1069,10 @@ class WebGLCanvas {
         * @return {Array}
     */
     get fillStyle() {
+        if (!this.useWebGL) {
+            return this.ctx.fillStyle;
+        }
+
         return this.state.fillStyle;
     }
 
@@ -1055,6 +1082,11 @@ class WebGLCanvas {
         * @param {string|Array} color - Color value
     */
     set strokeStyle(color) {
+        if (!this.useWebGL) {
+            this.ctx.strokeStyle = color;
+            return;
+        }
+
         this.state.strokeStyle = this.parseColor(color);
     }
 
@@ -1064,6 +1096,10 @@ class WebGLCanvas {
         * @return {Array}
     */
     get strokeStyle() {
+        if (!this.useWebGL) {
+            return this.ctx.strokeStyle;
+        }
+
         return this.state.strokeStyle;
     }
 
@@ -1072,6 +1108,11 @@ class WebGLCanvas {
         * @param {number} width - Line width in pixels
     */
     set lineWidth(width) {
+        if (!this.useWebGL) {
+            this.ctx.lineWidth = width;
+            return;
+        }
+
         this.state.lineWidth = width;
     }
 
@@ -1081,6 +1122,10 @@ class WebGLCanvas {
         * @return {number}
     */
     get lineWidth() {
+        if (!this.useWebGL) {
+            return this.ctx.lineWidth;
+        }
+
         return this.state.lineWidth;
     }
 
@@ -1088,34 +1133,70 @@ class WebGLCanvas {
  * Set shadow properties
  */
     set shadowColor(color) {
+        if (!this.useWebGL) {
+            this.ctx.shadowColor = color;
+            return;
+        }
+
         this.state.shadowColor = this.parseColor(color);
     }
 
     get shadowColor() {
+        if (!this.useWebGL) {
+            return this.ctx.shadowColor;
+        }
+
         return this.state.shadowColor;
     }
 
     set shadowBlur(blur) {
+        if (!this.useWebGL) {
+            this.ctx.shadowBlur = Math.max(0, blur);
+            return;
+        }
+
         this.state.shadowBlur = Math.max(0, blur);
     }
 
     get shadowBlur() {
+        if (!this.useWebGL) {
+            return this.ctx.shadowBlur;
+        }
+
         return this.state.shadowBlur;
     }
 
     set shadowOffsetX(offset) {
+        if (!this.useWebGL) {
+            this.ctx.shadowOffsetX = offset;
+            return;
+        }
+
         this.state.shadowOffsetX = offset;
     }
 
     get shadowOffsetX() {
+        if (!this.useWebGL) {
+            return this.ctx.shadowOffsetX;
+        }
+
         return this.state.shadowOffsetX;
     }
 
     set shadowOffsetY(offset) {
+        if (!this.useWebGL) {
+            this.ctx.shadowOffsetY = offset;
+            return;
+        }
+
         this.state.shadowOffsetY = offset;
     }
 
     get shadowOffsetY() {
+        if (!this.useWebGL) {
+            return this.ctx.shadowOffsetY;
+        }
+
         return this.state.shadowOffsetY;
     }
 
@@ -1123,6 +1204,11 @@ class WebGLCanvas {
  * Set image smoothing
  */
     set imageSmoothingEnabled(enabled) {
+        if (!this.useWebGL) {
+            this.ctx.imageSmoothingEnabled = enabled;
+            return;
+        }
+
         this.state.imageSmoothingEnabled = enabled;
 
         // Update existing textures
@@ -1141,6 +1227,10 @@ class WebGLCanvas {
     }
 
     get imageSmoothingEnabled() {
+        if (!this.useWebGL) {
+            return this.ctx.imageSmoothingEnabled;
+        }
+
         return this.state.imageSmoothingEnabled;
     }
 
@@ -1148,6 +1238,11 @@ class WebGLCanvas {
      * Set image smoothing quality
      */
     set imageSmoothingQuality(quality) {
+        if (!this.useWebGL) {
+            this.ctx.imageSmoothingQuality = quality;
+            return;
+        }
+
         const validQualities = ['low', 'medium', 'high'];
         const intQualities = [0, 1, 2]; // For compatibility with numeric values
         if (validQualities.includes(quality)) {
@@ -1158,6 +1253,10 @@ class WebGLCanvas {
     }
 
     get imageSmoothingQuality() {
+        if (!this.useWebGL) {
+            return this.ctx.imageSmoothingQuality;
+        }
+
         return this.state.imageSmoothingQuality || 'low';
     }
 
@@ -1165,6 +1264,11 @@ class WebGLCanvas {
     * Set global composite operation
     */
     set globalCompositeOperation(operation) {
+        if (!this.useWebGL) {
+            this.ctx.globalCompositeOperation = operation;
+            return;
+        }
+
         const validOperations = [
             'source-over', 'source-in', 'source-out', 'source-atop',
             'destination-over', 'destination-in', 'destination-out', 'destination-atop',
@@ -1181,7 +1285,23 @@ class WebGLCanvas {
     }
 
     get globalCompositeOperation() {
+        if (!this.useWebGL) {
+            return this.ctx.globalCompositeOperation;
+        }
+
         return this.state.globalCompositeOperation;
+    }
+
+    /*
+    * Set line dash offset
+    * @param {number} offset - Dash offset
+    */
+    set lineDashOffset(offset) {
+        this.state.lineDashOffset = offset;
+    }
+
+    get lineDashOffset() {
+        return this.state.lineDashOffset;
     }
 
     /*
@@ -1402,10 +1522,53 @@ class WebGLCanvas {
     }
 
     /*
+        * Transfer current state to 2D context
+        * Applies the current state properties to the 2D canvas context
+    */
+    transferContextState() {
+        if (!this.useWebGL) {
+            if (!this.ctx) return;
+            // Apply current state to 2D context
+            this.ctx.fillStyle = `rgba(${Math.round(this.state.fillStyle[0] * 255)}, ${Math.round(this.state.fillStyle[1] * 255)}, ${Math.round(this.state.fillStyle[2] * 255)}, ${this.state.fillStyle[3]})`;
+            this.ctx.strokeStyle = `rgba(${Math.round(this.state.strokeStyle[0] * 255)}, ${Math.round(this.state.strokeStyle[1] * 255)}, ${Math.round(this.state.strokeStyle[2] * 255)}, ${this.state.strokeStyle[3]})`;
+            this.ctx.lineWidth = this.state.lineWidth;
+            this.ctx.lineCap = this.state.lineCap;
+            this.ctx.lineJoin = this.state.lineJoin;
+            this.ctx.miterLimit = this.state.miterLimit;
+            this.ctx.setLineDash(this.state.lineDash);
+            this.ctx.lineDashOffset = this.state.lineDashOffset;
+            this.ctx.globalAlpha = this.state.globalAlpha;
+            this.ctx.globalCompositeOperation = this.state.globalCompositeOperation;
+            this.ctx.font = this.state.font;
+            this.ctx.textAlign = this.state.textAlign;
+            this.ctx.textBaseline = this.state.textBaseline;
+            this.ctx.shadowColor = `rgba(${Math.round(this.state.shadowColor[0] * 255)}, ${Math.round(this.state.shadowColor[1] * 255)}, ${Math.round(this.state.shadowColor[2] * 255)}, ${this.state.shadowColor[3]})`;
+            this.ctx.shadowBlur = this.state.shadowBlur;
+            this.ctx.shadowOffsetX = this.state.shadowOffsetX;
+            this.ctx.shadowOffsetY = this.state.shadowOffsetY;
+            this.ctx.imageSmoothingEnabled = this.state.imageSmoothingEnabled;
+            this.ctx.imageSmoothingQuality = this.state.imageSmoothingQuality || 'low';
+            // Apply transform matrix
+            this.ctx.setTransform(
+                this.state.transform[0], this.state.transform[1],
+                this.state.transform[2], this.state.transform[3],
+                this.state.transform[4], this.state.transform[5]
+            );
+        }
+    }
+
+    /*
         * Save the current state
         * Saves all drawing state to the state stack
     */
     save() {
+        if (!this.useWebGL) {
+            if (!this.ctx) return;
+            this.transferContextState();
+            this.ctx.save();
+            return;
+        }
+
         this.stateStack.push({
             fillStyle: [...this.state.fillStyle],
             strokeStyle: [...this.state.strokeStyle],
@@ -1434,6 +1597,12 @@ class WebGLCanvas {
         * Restores fillStyle, strokeStyle, lineWidth, and transform from the state stack
     */
     restore() {
+        if (!this.useWebGL) {
+            if (!this.ctx) return;
+            this.ctx.restore();
+            return;
+        }
+
         if (this.stateStack.length > 0) {
             this.state = this.stateStack.pop();
         }
@@ -1443,6 +1612,11 @@ class WebGLCanvas {
      * Add rectangle to batch
      */
     addRectangleToBatch(x, y, width, height, color) {
+        if (!this.useWebGL) {
+            return;
+            this.transferContextState();
+        }
+
         const batch = this.batchBuffers.rectangles;
 
         if (batch.currentVertices + 4 > batch.maxVertices) {
@@ -1503,6 +1677,11 @@ class WebGLCanvas {
      * Add circle to batch
      */
     addCircleToBatch(x, y, radius, color) {
+        if (!this.useWebGL) {
+            return;
+            this.transferContextState();
+        }
+
         const batch = this.batchBuffers.circles;
 
         if (batch.currentVertices + 4 > batch.maxVertices) {
@@ -1563,6 +1742,11 @@ class WebGLCanvas {
      * Add ellipse to batch
      */
     addEllipseToBatch(x, y, radiusX, radiusY, color) {
+        if (!this.useWebGL) {
+            return;
+            this.transferContextState();
+        }
+
         const batch = this.batchBuffers.ellipses;
 
         if (batch.currentVertices + 4 > batch.maxVertices) {
@@ -1906,18 +2090,6 @@ class WebGLCanvas {
     */
     getLineDash() {
         return [...this.state.lineDash];
-    }
-
-    /*
-    * Set line dash offset
-    * @param {number} offset - Dash offset
-    */
-    set lineDashOffset(offset) {
-        this.state.lineDashOffset = offset;
-    }
-
-    get lineDashOffset() {
-        return this.state.lineDashOffset;
     }
 
     /*
