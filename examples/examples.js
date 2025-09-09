@@ -1675,58 +1675,6 @@ try {
         code: `// Kaleidoscope Shader Effect
 const ctx = new WebGLCanvas(canvas);
 
-// Check if WebGL is available and shaders are supported
-if (!ctx.gl || !ctx.addShader) {
-    console.log('WebGL not available, using fallback animation');
-    
-    if (window.currentAnimationId) {
-        cancelAnimationFrame(window.currentAnimationId);
-    }
-    
-    let time = 0;
-    let animationId;
-    
-    function animate() {
-        ctx.clear ? ctx.clear() : ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        time += 0.01;
-        
-        // Fallback kaleidoscope effect using regular drawing
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        const segments = 8;
-        
-        for (let segment = 0; segment < segments; segment++) {
-            const angle = (segment / segments) * Math.PI * 2;
-            const radius = 100;
-            
-            ctx.strokeStyle = \`hsl(\${(segment * 45 + time * 100) % 360}, 70%, 60%)\`;
-            ctx.lineWidth = 3;
-            
-            const x1 = centerX + Math.cos(angle) * radius;
-            const y1 = centerY + Math.sin(angle) * radius;
-            const x2 = centerX + Math.cos(angle + Math.PI) * radius;
-            const y2 = centerY + Math.sin(angle + Math.PI) * radius;
-            
-            if (ctx.drawLine) {
-                ctx.drawLine(x1, y1, x2, y2);
-            } else {
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.stroke();
-            }
-        }
-        
-        if (ctx.flush) ctx.flush();
-        animationId = requestAnimationFrame(animate);
-    }
-    
-    animationId = requestAnimationFrame(animate);
-    window.currentAnimationId = animationId;
-    return;
-}
-
 const kaleidoscopeVertexShader = \`
 precision mediump float;
 attribute vec2 a_position;
@@ -1762,7 +1710,7 @@ vec2 kaleidoscope(vec2 uv, float segments) {
     float angle = atan(pos.y, pos.x);
     
     // Create kaleidoscope effect
-    float segment = PI * 2.0 / segments;
+    float segment = PI * 4.0 / segments;
     angle = mod(angle, segment);
     if (mod(floor(atan(pos.y, pos.x) / segment), 2.0) == 1.0) {
         angle = segment - angle;
@@ -1775,12 +1723,12 @@ void main() {
     vec2 uv = v_uv;
     
     // Apply kaleidoscope transformation
-    vec2 kUv = kaleidoscope(uv, 8.0);
+    vec2 kUv = kaleidoscope(uv, 30.0);
     
     // Create animated pattern
     float pattern = 0.0;
-    pattern += sin(kUv.x * 20.0 + u_time);
-    pattern += cos(kUv.y * 15.0 + u_time * 1.3);
+    pattern += sin(kUv.x * 40.0 + u_time);
+    pattern += cos(kUv.y * 25.0 + u_time * 1.3);
     pattern += sin((kUv.x + kUv.y) * 10.0 + u_time * 0.8);
     
     // Add radial component
@@ -1816,7 +1764,7 @@ try {
 
     function animate() {
         ctx.clear();
-        time += 0.01;
+        time += 0.1;
         
         // Fill the entire canvas with one big rectangle using the shader
         const quad = ctx.createQuad(0, 0, canvas.width, canvas.height);

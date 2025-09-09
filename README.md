@@ -54,7 +54,6 @@ A comprehensive WebGL-powered 2D graphics library that provides a familiar HTML5
 Perfect for creating crisp, pixel-perfect games with modern performance:
 
 ```javascript
-const canvas = document.getElementById('gameCanvas');
 const ctx = new WebGLCanvas(canvas, {
     pixelWidth: 320,      // NES-style resolution
     pixelHeight: 240,
@@ -158,6 +157,8 @@ function gameLoop() {
     ctx.fillText(`Bullets: ${bullets.length}`, 10, 20);
     
     requestAnimationFrame(gameLoop);
+	
+	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 gameLoop();
@@ -284,6 +285,8 @@ function animateChart() {
     }
     
     setTimeout(() => requestAnimationFrame(animateChart), 50);
+	
+	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 animateChart();
@@ -294,6 +297,8 @@ animateChart();
 Complex particle effects with thousands of particles:
 
 ```javascript
+const ctx = new WebGLCanvas(canvas);
+
 function createParticle(x, y) {
     return {
         x: x,
@@ -376,6 +381,8 @@ function particleLoop() {
     ctx.fillText('Click to emit burst, move mouse to emit trail', 10, 40);
     
     requestAnimationFrame(particleLoop);
+	
+	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 particleLoop();
@@ -442,6 +449,8 @@ function drawFlowField(ctx) {
 function flowFieldAnimation() {
     drawFlowField(ctx);
     requestAnimationFrame(flowFieldAnimation);
+	
+	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 flowFieldAnimation();
@@ -452,64 +461,163 @@ flowFieldAnimation();
 Advanced GPU effects with custom shaders:
 
 ```javascript
+// Kaleidoscope Shader Effect
 const ctx = new WebGLCanvas(canvas);
 
-// Add a plasma effect shader
-const plasmaVertexShader = `
-    attribute vec2 a_position;
-    uniform vec2 u_resolution;
-    varying vec2 v_uv;
+const kaleidoscopeVertexShader = `
+precision mediump float;
+attribute vec2 a_position;
+attribute vec4 a_color;
+uniform vec2 u_resolution;
+varying vec4 v_color;
+varying vec2 v_uv;
+
+void main() {
+    vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+    normalized.y = -normalized.y;
     
-    void main() {
-        vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
-        normalized.y = -normalized.y;
-        gl_Position = vec4(normalized, 0, 1);
-        v_uv = a_position / u_resolution;
-    }
+    gl_Position = vec4(normalized, 0, 1);
+    v_color = a_color;
+    v_uv = a_position / u_resolution;
+}
 `;
 
-const plasmaFragmentShader = `
-    precision mediump float;
-    uniform float u_time;
-    uniform vec2 u_resolution;
-    varying vec2 v_uv;
+const kaleidoscopeFragmentShader = `
+precision mediump float;
+uniform float u_time;
+uniform vec2 u_resolution;
+varying vec4 v_color;
+varying vec2 v_uv;
+
+#define PI 3.14159265359
+
+vec2 kaleidoscope(vec2 uv, float segments) {
+    vec2 center = vec2(0.5, 0.5);
+    vec2 pos = uv - center;
     
-    void main() {
-        vec2 p = (v_uv - 0.5) * 8.0;
-        float time = u_time * 0.5;
-        
-        float v = sin(p.x + time) + 
-                  sin(p.y + time) + 
-                  sin(p.x + p.y + time) + 
-                  sin(length(p) + time);
-                  
-        vec3 color = vec3(
-            sin(v) * 0.5 + 0.5,
-            sin(v + 2.0) * 0.5 + 0.5,
-            sin(v + 4.0) * 0.5 + 0.5
-        );
-        
-        gl_FragColor = vec4(color, 1.0);
+    float radius = length(pos);
+    float angle = atan(pos.y, pos.x);
+    
+    // Create kaleidoscope effect
+    float segment = PI * 4.0 / segments;
+    angle = mod(angle, segment);
+    if (mod(floor(atan(pos.y, pos.x) / segment), 2.0) == 1.0) {
+        angle = segment - angle;
     }
-`;
-
-// Add the shader to WebGL Canvas
-ctx.addShader('plasma', plasmaVertexShader, plasmaFragmentShader);
-
-function drawPlasmaEffect() {
-    // Create fullscreen quad
-    const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
     
-    // Draw with plasma shader
-    ctx.drawWithShader('plasma', vertices, indices, {
-        u_time: Date.now() * 0.001,
-        u_resolution: [canvas.width, canvas.height]
-    });
-    
-    requestAnimationFrame(drawPlasmaEffect);
+    return vec2(cos(angle), sin(angle)) * radius + center;
 }
 
-drawPlasmaEffect();
+void main() {
+    vec2 uv = v_uv;
+    
+    // Apply kaleidoscope transformation
+    vec2 kUv = kaleidoscope(uv, 30.0);
+    
+    // Create animated pattern
+    float pattern = 0.0;
+    pattern += sin(kUv.x * 40.0 + u_time);
+    pattern += cos(kUv.y * 25.0 + u_time * 1.3);
+    pattern += sin((kUv.x + kUv.y) * 10.0 + u_time * 0.8);
+    
+    // Add radial component
+    vec2 center = vec2(0.5, 0.5);
+    float dist = distance(kUv, center);
+    pattern += sin(dist * 25.0 - u_time * 2.0);
+    
+    pattern = pattern / 4.0;
+    
+    // Create rainbow colors
+    vec3 color;
+    color.r = 0.5 + 0.5 * sin(pattern + u_time);
+    color.g = 0.5 + 0.5 * sin(pattern + u_time + 2.094);
+    color.b = 0.5 + 0.5 * sin(pattern + u_time + 4.188);
+    
+    // Add some brightness variation
+    float brightness = 0.8 + 0.2 * sin(pattern * 3.0);
+    color *= brightness;
+    
+    gl_FragColor = vec4(color, v_color.a);
+}
+`;
+
+if (window.currentAnimationId) {
+    cancelAnimationFrame(window.currentAnimationId);
+}
+
+try {
+    ctx.addShader('kaleidoscope', kaleidoscopeVertexShader, kaleidoscopeFragmentShader);
+
+    let time = 0;
+    let animationId;
+
+    function animate() {
+        ctx.clear();
+        time += 0.1;
+        
+        // Fill the entire canvas with one big rectangle using the shader
+        const quad = ctx.createQuad(0, 0, canvas.width, canvas.height);
+        ctx.drawWithShader('kaleidoscope', quad.vertices, quad.indices, {
+            u_time: time,
+            u_resolution: [canvas.width, canvas.height]
+        });
+        
+        animationId = requestAnimationFrame(animate);
+    }
+
+    animationId = requestAnimationFrame(animate);
+    window.currentAnimationId = animationId;
+    
+} catch (error) {
+    console.error('Shader failed:', error);
+    
+    // Fallback animation
+    let time = 0;
+    let animationId;
+    
+    function animate() {
+        ctx.clear ? ctx.clear() : ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        time += 0.01;
+        
+        // Draw kaleidoscope pattern as fallback
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        
+        for (let layer = 0; layer < 8; layer++) {
+            const radius = (layer + 1) * 20;
+            const points = 6 + layer;
+            
+            ctx.strokeStyle = `hsl(${(layer * 45 + time * 100) % 360}, 70%, 60%)`;
+            ctx.lineWidth = 2;
+            
+            for (let i = 0; i < points; i++) {
+                const angle1 = (i / points) * Math.PI * 2 + time;
+                const angle2 = ((i + 1) / points) * Math.PI * 2 + time;
+                
+                const x1 = centerX + Math.cos(angle1) * radius;
+                const y1 = centerY + Math.sin(angle1) * radius;
+                const x2 = centerX + Math.cos(angle2) * radius;
+                const y2 = centerY + Math.sin(angle2) * radius;
+                
+                if (ctx.drawLine) {
+                    ctx.drawLine(x1, y1, x2, y2);
+                } else {
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.stroke();
+                }
+            }
+        }
+        
+        if (ctx.flush) ctx.flush();
+        animationId = requestAnimationFrame(animate);
+    }
+    
+    animationId = requestAnimationFrame(animate);
+    window.currentAnimationId = animationId;
+}
 ```
 
 **Additional Shader Examples:**
@@ -549,14 +657,16 @@ const rippleFragmentShader = `
         float ripple3 = sin(dist * 60.0 - u_time * 12.0) * exp(-dist * 4.0);
 
         // Increase ripple amplitude for visibility (boosted from 0.5 to 1.0)
-        float totalRipple = (ripple1 + ripple2 * 0.6 + ripple3 * 0.3) * 1.0;
+        float totalRipple = (ripple1 + ripple2 * 0.6 + ripple3 * 0.3) * 2.0;  // Increased from 1.0 to 2.0 for stronger effect
 
+        // Safeguard: Prevent issues with normalize at center
+        vec2 direction = (dist > 0.001) ? normalize(v_uv - center) : vec2(0.0, 0.0);
+        
         // Distort coordinates more dramatically (increased multiplier from 0.1 to 0.3)
-        vec2 direction = normalize(v_uv - center);
-        vec2 distortedUV = v_uv + direction * totalRipple * 0.3;
+        vec2 distortedUV = v_uv + direction * abs(totalRipple) * 0.5;  // Added abs() for outward-only distortion
         
         // Make checkerboard larger and more responsive to distortion
-        vec2 grid = floor(distortedUV * 10.0);
+        vec2 grid = floor(distortedUV * 5.0);  // Reduced from 10.0 to 5.0 for coarser, more visible changes
         float checker = mod(grid.x + grid.y, 2.0);
         
         // Enhanced water-like colors with more contrast
@@ -575,14 +685,24 @@ const rippleFragmentShader = `
         finalColor *= shimmer;
 
         // Add ripple intensity as brightness (increased multiplier from 3.0 to 5.0)
-        finalColor += abs(totalRipple) * 5.0;
+        finalColor += abs(totalRipple) * 8.0;  // Increased from 5.0 to 8.0 for brighter highlights
+        
+        // Debug: Add a red tint near the center to visualize mouse position
+        if (dist < 0.05) {
+            finalColor = mix(finalColor, vec3(1.0, 0.0, 0.0), 0.5);
+        }
         
         gl_FragColor = vec4(finalColor, 1.0);
     }
 `;
 
-// Add the shader
-ctx.addShader('ripple', rippleVertexShader, rippleFragmentShader);
+// Add the shader with error handling
+try {
+    ctx.addShader('ripple', rippleVertexShader, rippleFragmentShader);
+} catch (error) {
+    console.error('Failed to add ripple shader:', error);
+    return; // Exit if shader fails
+}
 
 // Mouse position tracking
 let mouseX = canvas.width * 0.5;
@@ -609,13 +729,19 @@ function drawRippleEffect() {
     const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
     
     // Draw with ripple shader
+    const time = Date.now() * 0.005;  // Reduced from 0.01 to 0.005 for slower, more visible animation
     ctx.drawWithShader('ripple', vertices, indices, {
-        u_time: Date.now() * 0.005,
+        u_time: time,
         u_resolution: [canvas.width, canvas.height],
         u_mouse: [mouseX, mouseY]
     });
     
+    // Debug: Log values to console (remove after testing)
+    // console.log('Time:', time, 'Mouse:', mouseX, mouseY);
+    
     requestAnimationFrame(drawRippleEffect);
+    
+    ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 // Start the animation
@@ -701,6 +827,8 @@ function drawMandelbrot() {
     });
     
     requestAnimationFrame(drawMandelbrot);
+	
+	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 drawMandelbrot();
@@ -819,6 +947,8 @@ function heatmapAnimation() {
     drawHeatmap(data, heatmapWidth, heatmapHeight);
     
     requestAnimationFrame(heatmapAnimation);
+	
+	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 heatmapAnimation();
@@ -867,9 +997,11 @@ heatmapAnimation();
 - `measureText(text)` - Get text metrics
 
 **Image Data:**
-- `putImageData(imageData, dx, dy)` - Put pixel data
-- `getImageData(sx, sy, sw, sh)` - Get pixel data (limited implementation)
-- `createImageData(width, height)` - Create blank image data
+- `putImageData(imageData, dx, dy)` - Put pixel data onto the canvas
+- `getImageData(sx, sy, sw, sh)` - Get pixel data from the WebGL framebuffer as ImageData (now fully implemented with pixel reading)
+- `createImageData(width, height)` - Create blank ImageData
+- `toDataURL(type?, quality?)` - Export the entire canvas as a data URL string (e.g., for saving images)
+- `toBlob(type?, quality?)` - Export the entire canvas as a Blob (async, for downloads/uploads)
 
 ### Style Properties
 

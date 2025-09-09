@@ -13,7 +13,7 @@ class WebGLCanvas {
             pixelWidth: options.pixelWidth || canvas.width,
             pixelHeight: options.pixelHeight || canvas.height,
             pixelScale: options.pixelScale || 1,
-            batchSize: options.batchSize || 10000, // Max objects per batch
+            batchSize: Math.min(options.batchSize || 5000, 5000), // Max objects per batch
             ...options
         };
 
@@ -23,6 +23,14 @@ class WebGLCanvas {
         this.width = this.canvas.width;
         this.height = this.canvas.height;
 
+        // Context lost state
+        this.contextLost = false;
+        this.contextRestoreCallbacks = [];
+
+        // Context stability tracking
+        this.contextLossCount = 0;
+        this.timers = new Set();
+
         if (!this.useWebGL) {
             // 2D context
             this.ctx = canvas.getContext('2d');
@@ -30,11 +38,29 @@ class WebGLCanvas {
                 throw new Error('2D context not supported');
             }
         } else {
-            // WebGL context
-            this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            // WebGL context with better stability settings
+            this.gl = canvas.getContext('webgl', {
+                preserveDrawingBuffer: true,
+                antialias: false,
+                alpha: true,
+                premultipliedAlpha: true,
+                failIfMajorPerformanceCaveat: false,
+                powerPreference: 'default'
+            }) || canvas.getContext('experimental-webgl', {
+                preserveDrawingBuffer: true,
+                antialias: false,
+                alpha: true,
+                premultipliedAlpha: true,
+                failIfMajorPerformanceCaveat: false,
+                powerPreference: 'default'
+            });
+
             if (!this.gl) {
                 throw new Error('WebGL not supported');
             }
+
+            // Set up context loss handlers immediately
+            this.setupContextLossHandling();
         }
 
         // State management
@@ -315,11 +341,11 @@ class WebGLCanvas {
     }
 
     /*
-        * Create a shader of a specific type (vertex or fragment)
-        * Compiles the shader source code
-        * @param {number} type - Shader type (gl.VERTEX_SHADER or gl.FRAGMENT_SHADER)
-        * @param {string} source - GLSL source code for the shader
-        * @return {WebGLShader} - Compiled shader
+    * Create a shader of a specific type (vertex or fragment)
+    * Compiles the shader source code
+    * @param {number} type - Shader type (gl.VERTEX_SHADER or gl.FRAGMENT_SHADER)
+    * @param {string} source - GLSL source code for the shader
+    * @return {WebGLShader} - Compiled shader
     */
     createShader(type, source) {
         const gl = this.gl;
@@ -327,8 +353,21 @@ class WebGLCanvas {
         gl.shaderSource(shader, source);
         gl.compileShader(shader);
 
+        // Always check compilation status and log errors
         if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            throw new Error('Shader compilation error: ' + gl.getShaderInfoLog(shader));
+            const error = gl.getShaderInfoLog(shader);
+            const shaderType = type === gl.VERTEX_SHADER ? 'vertex' : 'fragment';
+            console.error(`${shaderType} shader compilation error:`, error);
+            console.error('Shader source:', source);
+            gl.deleteShader(shader);
+            throw new Error(`${shaderType} shader compilation error: ${error}`);
+        }
+
+        // Log warnings even if compilation succeeds
+        const log = gl.getShaderInfoLog(shader);
+        if (log && log.trim()) {
+            const shaderType = type === gl.VERTEX_SHADER ? 'vertex' : 'fragment';
+            console.warn(`${shaderType} shader compile log:`, log);
         }
 
         return shader;
@@ -726,14 +765,227 @@ class WebGLCanvas {
     }
 
     /*
+    * Set up WebGL context loss and restore handling
+    */
+    setupContextLossHandling() {
+        // Store the lose context extension for emergency use
+        this.loseContextExtension = this.gl.getExtension('WEBGL_lose_context');
+
+        // Handle context lost event
+        this.canvas.addEventListener('webglcontextlost', (event) => {
+            console.warn('WebGL context lost');
+            event.preventDefault(); // This is crucial - prevents default behavior
+            this.contextLost = true;
+
+            // Stop any ongoing animations immediately
+            if (this.animationId) {
+                cancelAnimationFrame(this.animationId);
+                this.animationId = null;
+            }
+
+            // Clear all pending timeouts/intervals
+            this.clearAllTimers();
+
+            // Clear all resources
+            this.clearResourcesOnContextLoss();
+
+            // Emit custom event
+            if (this.canvas && typeof this.canvas.dispatchEvent === 'function') {
+                try {
+                    this.canvas.dispatchEvent(new CustomEvent('contextlost'));
+                } catch (e) {
+                    console.warn('Failed to dispatch contextlost event:', e);
+                }
+            }
+        }, false);
+
+        // Handle context restored event with retry mechanism
+        this.canvas.addEventListener('webglcontextrestored', (event) => {
+            console.log('WebGL context restored');
+            this.contextLost = false;
+
+            // Add a small delay before restoration to ensure stability
+            setTimeout(() => {
+                this.attemptContextRestore();
+            }, 100);
+        }, false);
+
+        // Monitor for context loss in critical operations
+        this.setupContextMonitoring();
+    }
+
+    /*
+    * Attempt context restoration with error handling
+    */
+    attemptContextRestore() {
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        const restore = () => {
+            try {
+                this.restoreWebGLState();
+
+                // Run restore callbacks
+                this.contextRestoreCallbacks.forEach(callback => {
+                    try {
+                        callback();
+                    } catch (e) {
+                        console.error('Error in context restore callback:', e);
+                    }
+                });
+
+                // Emit custom event
+                if (this.canvas && typeof this.canvas.dispatchEvent === 'function') {
+                    this.canvas.dispatchEvent(new CustomEvent('contextrestored'));
+                }
+
+                console.log('WebGL context successfully restored');
+            } catch (e) {
+                attempts++;
+                console.error(`Context restore attempt ${attempts} failed:`, e);
+
+                if (attempts < maxAttempts) {
+                    console.log(`Retrying context restore in ${attempts * 500}ms...`);
+                    setTimeout(restore, attempts * 500);
+                } else {
+                    console.error('Failed to restore WebGL context after maximum attempts');
+                    this.contextLost = true;
+                }
+            }
+        };
+
+        restore();
+    }
+
+    /*
+    * Monitor context health during operations
+    */
+    setupContextMonitoring() {
+        // Check context periodically during heavy operations
+        this.contextHealthCheck = setInterval(() => {
+            if (this.gl && !this.contextLost && this.gl.isContextLost()) {
+                console.warn('Context loss detected during health check');
+                this.contextLost = true;
+                this.clearResourcesOnContextLoss();
+            }
+        }, 5000); // Check every 5 seconds
+    }
+
+    /*
+    * Clear all timers and intervals
+    */
+    clearAllTimers() {
+        // Clear any stored timer IDs
+        if (this.timers) {
+            this.timers.forEach(id => clearTimeout(id));
+            this.timers.clear();
+        }
+    }
+
+    /*
+     * Clear resources when context is lost
+     */
+    clearResourcesOnContextLoss() {
+        // Clear texture cache references (textures are automatically lost)
+        this.textureCache.clear();
+        this.fontCache.clear();
+
+        // Clear shader references (programs are automatically lost)
+        this.shaders = {};
+
+        // Reset batch state
+        if (this.batchBuffers) {
+            Object.values(this.batchBuffers).forEach(batch => {
+                if (batch) {
+                    batch.currentVertices = 0;
+                    batch.currentIndices = 0;
+                    if (batch.currentQuads !== undefined) batch.currentQuads = 0;
+                    batch.currentTexture = null;
+                }
+            });
+        }
+
+        // Clear custom buffers
+        this.customVertexBuffer = null;
+        this.customIndexBuffer = null;
+        this.currentShader = null;
+    }
+
+    /*
+     * Restore WebGL state after context restore
+     */
+    restoreWebGLState() {
+        if (!this.gl || this.gl.isContextLost()) {
+            console.error('Cannot restore state - context is still lost');
+            return;
+        }
+
+        try {
+            // Reinitialize WebGL
+            this.init();
+
+            // Recreate built-in shaders
+            this.createBuiltInShaders();
+
+            // Recreate batch buffers
+            this.createBatchBuffers();
+
+            // Set initial viewport
+            this.gl.viewport(0, 0, this.width, this.height);
+            this.gl.enable(this.gl.BLEND);
+            this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+
+            console.log('WebGL state restored successfully');
+        } catch (e) {
+            console.error('Failed to restore WebGL state:', e);
+            this.contextLost = true; // Keep marked as lost if restore fails
+            throw e;
+        }
+    }
+
+    /*
+     * Add callback to run when context is restored
+     * @param {Function} callback - Function to call on context restore
+     */
+    onContextRestore(callback) {
+        this.contextRestoreCallbacks.push(callback);
+    }
+
+    /*
+     * Check if context is lost before performing operations
+     */
+    isContextLost() {
+        return this.contextLost || (this.gl && this.gl.isContextLost());
+    }
+
+    /*
      * Flush all batches to GPU
      */
     flush() {
-        this.flushRectangles();
-        this.flushCircles();
-        this.flushEllipses();
-        this.flushLines();
-        this.flushImages();
+        if (this.isContextLost()) {
+            console.warn('Skipping flush - WebGL context is lost');
+            return;
+        }
+
+        if (!this.gl) {
+            console.warn('Skipping flush - WebGL context not available');
+            return;
+        }
+
+        try {
+            this.flushRectangles();
+            this.flushCircles();
+            this.flushEllipses();
+            this.flushLines();
+            this.flushImages();
+        } catch (e) {
+            if (this.gl && this.gl.isContextLost()) {
+                console.warn('Context lost during flush operation');
+                this.contextLost = true;
+            } else {
+                console.error('Error during flush:', e);
+            }
+        }
     }
 
     /*
@@ -1872,35 +2124,85 @@ class WebGLCanvas {
      * Get or create texture from image
      */
     getOrCreateTexture(image) {
+        // Check for context loss first
+        if (this.isContextLost()) {
+            console.warn('Cannot create texture - context is lost');
+            return null;
+        }
+
         if (this.textureCache.has(image)) {
-            return this.textureCache.get(image);
+            const texture = this.textureCache.get(image);
+            // Verify texture is still valid
+            if (this.gl.isTexture(texture)) {
+                return texture;
+            } else {
+                // Remove invalid texture from cache
+                this.textureCache.delete(image);
+            }
         }
 
-        const gl = this.gl;
-        const texture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-
-        // Set texture parameters
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-        if (this.state.imageSmoothingEnabled) {
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        } else {
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        // More aggressive texture cache management
+        if (this.textureCache.size > 50) { // Reduced from 100
+            console.warn('Texture cache getting large, cleaning up...');
+            this.cleanupOldTextures();
         }
 
-        // Upload image data
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        return this.safeWebGLOperation(() => {
+            const gl = this.gl;
+            const texture = gl.createTexture();
 
-        // Store dimensions on texture for easy access
-        texture.width = image.width || image.videoWidth || image.naturalWidth;
-        texture.height = image.height || image.videoHeight || image.naturalHeight;
+            if (!texture) {
+                throw new Error('Failed to create texture');
+            }
 
-        this.textureCache.set(image, texture);
-        return texture;
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+
+            // Set texture parameters
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+            if (this.state.imageSmoothingEnabled) {
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            } else {
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            }
+
+            // Upload image data
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+
+            // Store dimensions on texture for easy access
+            texture.width = image.width || image.videoWidth || image.naturalWidth;
+            texture.height = image.height || image.videoHeight || image.naturalHeight;
+
+            this.textureCache.set(image, texture);
+            return texture;
+        }, 'texture creation');
+    }
+
+    /*
+     * Clean up old textures when cache gets too large
+     */
+    cleanupOldTextures() {
+        if (this.textureCache.size <= 50) return;
+
+        let count = 0;
+        const toDelete = [];
+
+        for (const [image, texture] of this.textureCache.entries()) {
+            if (count++ > 25) break; // Keep only the first 25
+            toDelete.push([image, texture]);
+        }
+
+        toDelete.forEach(([image, texture]) => {
+            if (this.gl && this.gl.isTexture(texture)) {
+                this.gl.deleteTexture(texture);
+            }
+            this.textureCache.delete(image);
+        });
+
+        console.log(`Cleaned up ${toDelete.length} old textures`);
     }
 
     /*
@@ -2606,18 +2908,99 @@ class WebGLCanvas {
     }
 
     /*
-     * Get image data
-     * @param {number} sx - Source x
-     * @param {number} sy - Source y
-     * @param {number} sw - Source width
-     * @param {number} sh - Source height
-     * @return {ImageData} - Image data
-     */
+    * Get image data from the WebGL framebuffer
+    * Reads pixel data from the specified region of the canvas
+    * @param {number} sx - Source x coordinate (top-left origin)
+    * @param {number} sy - Source y coordinate (top-left origin)
+    * @param {number} sw - Source width
+    * @param {number} sh - Source height
+    * @return {ImageData} - ImageData object containing RGBA pixel data
+    */
     getImageData(sx, sy, sw, sh) {
-        // This would require reading from the WebGL framebuffer
-        // For now, return empty image data
-        console.warn('getImageData is not fully implemented in this WebGL canvas');
-        return new ImageData(sw, sh);
+        if (!this.gl) {
+            throw new Error('WebGL context not available');
+        }
+
+        // Ensure all pending draws are flushed to the framebuffer
+        this.flush();
+
+        // Clamp coordinates to canvas bounds
+        sx = Math.max(0, Math.min(sx, this.width));
+        sy = Math.max(0, Math.min(sy, this.height));
+        sw = Math.max(0, Math.min(sw, this.width - sx));
+        sh = Math.max(0, Math.min(sh, this.height - sy));
+
+        if (sw === 0 || sh === 0) {
+            return new ImageData(0, 0);
+        }
+
+        // WebGL uses bottom-left origin, so flip Y
+        const glY = this.height - sy - sh;
+
+        // Create array to hold pixel data (RGBA)
+        const pixels = new Uint8Array(sw * sh * 4);
+
+        // Bind the default framebuffer (0)
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+
+        // Read pixels from the framebuffer
+        this.gl.readPixels(sx, glY, sw, sh, this.gl.RGBA, this.gl.UNSIGNED_BYTE, pixels);
+
+        // Create ImageData (this handles the RGBA format)
+        const imageData = new ImageData(new Uint8ClampedArray(pixels), sw, sh);
+
+        // Check for WebGL errors
+        this.checkGLError('getImageData');
+
+        return imageData;
+    }
+
+    /*
+ * Get the entire canvas as a data URL (e.g., for saving or displaying)
+ * @param {string} type - MIME type (default: 'image/png')
+ * @param {number} quality - Quality for JPEG (0-1, ignored for PNG)
+ * @return {string} - Data URL string
+ */
+    toDataURL(type = 'image/png', quality = 1.0) {
+        // Get the full canvas image data
+        const imageData = this.getImageData(0, 0, this.width, this.height);
+
+        // Create a temporary 2D canvas to convert ImageData to data URL
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = this.width;
+        tempCanvas.height = this.height;
+        const tempCtx = tempCanvas.getContext('2d');
+
+        // Put the image data onto the temp canvas
+        tempCtx.putImageData(imageData, 0, 0);
+
+        // Get the data URL
+        return tempCanvas.toDataURL(type, quality);
+    }
+
+    /*
+     * Get the entire canvas as a blob (e.g., for downloading or uploading)
+     * @param {string} type - MIME type (default: 'image/png')
+     * @param {number} quality - Quality for JPEG (0-1, ignored for PNG)
+     * @return {Promise<Blob>} - Promise resolving to a Blob
+     */
+    toBlob(type = 'image/png', quality = 1.0) {
+        return new Promise((resolve, reject) => {
+            // Get the full canvas image data
+            const imageData = this.getImageData(0, 0, this.width, this.height);
+
+            // Create a temporary 2D canvas
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = this.width;
+            tempCanvas.height = this.height;
+            const tempCtx = tempCanvas.getContext('2d');
+
+            // Put the image data onto the temp canvas
+            tempCtx.putImageData(imageData, 0, 0);
+
+            // Convert to blob
+            tempCanvas.toBlob(resolve, type, quality);
+        });
     }
 
     /*
@@ -2801,84 +3184,105 @@ class WebGLCanvas {
     }
 
     /*
-    * Draw with custom shader
-    * @param {string} shaderName - Name of the shader to use
-    * @param {Float32Array} vertices - Vertex data
-    * @param {Uint16Array} indices - Index data (optional)
-    * @param {Object} uniforms - Uniform values to set
-    * @param {Object} attributes - Additional attribute data
-    */
+ * Enhanced drawWithShader with context loss protection
+ */
     drawWithShader(shaderName, vertices, indices = null, uniforms = {}, attributes = {}) {
-        const program = this.useShader(shaderName);
-        const gl = this.gl;
-
-        // Create vertex buffer if needed
-        if (!this.customVertexBuffer) {
-            this.customVertexBuffer = gl.createBuffer();
+        if (this.isContextLost()) {
+            console.warn('Skipping drawWithShader - WebGL context is lost');
+            return;
         }
 
-        // Upload vertex data
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.customVertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+        try {
+            const program = this.useShader(shaderName);
+            const gl = this.gl;
 
-        // Set up position attribute (assuming it exists)
-        if (program.attributes['a_position'] !== undefined) {
-            gl.enableVertexAttribArray(program.attributes['a_position']);
-            gl.vertexAttribPointer(program.attributes['a_position'], 2, gl.FLOAT, false, 0, 0);
-        }
-
-        // Set additional attributes
-        Object.keys(attributes).forEach(name => {
-            const location = program.attributes[name];
-            if (location !== undefined) {
-                const data = attributes[name];
-                // Create buffer for this attribute
-                const buffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-                gl.bufferData(gl.ARRAY_BUFFER, data.data, gl.DYNAMIC_DRAW);
-
-                gl.enableVertexAttribArray(location);
-                gl.vertexAttribPointer(location, data.size, data.type || gl.FLOAT, false, 0, 0);
+            // Check if program is valid
+            if (!program || !gl.isProgram(program)) {
+                console.error(`Invalid shader program: ${shaderName}`);
+                return;
             }
-        });
 
-        // Set uniforms
-        Object.keys(uniforms).forEach(name => {
-            const location = program.uniforms[name];
-            if (location !== null) {
-                const value = uniforms[name];
-                if (Array.isArray(value)) {
-                    switch (value.length) {
-                        case 1: gl.uniform1f(location, value[0]); break;
-                        case 2: gl.uniform2f(location, value[0], value[1]); break;
-                        case 3: gl.uniform3f(location, value[0], value[1], value[2]); break;
-                        case 4: gl.uniform4f(location, value[0], value[1], value[2], value[3]); break;
-                    }
-                } else if (typeof value === 'number') {
-                    gl.uniform1f(location, value);
+            // Create vertex buffer if needed
+            if (!this.customVertexBuffer) {
+                this.customVertexBuffer = gl.createBuffer();
+            }
+
+            // Upload vertex data
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.customVertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+
+            // Set up position attribute (assuming it exists)
+            if (program.attributes && program.attributes['a_position'] !== undefined) {
+                gl.enableVertexAttribArray(program.attributes['a_position']);
+                gl.vertexAttribPointer(program.attributes['a_position'], 2, gl.FLOAT, false, 0, 0);
+            }
+
+            // Set additional attributes
+            Object.keys(attributes).forEach(name => {
+                const location = program.attributes && program.attributes[name];
+                if (location !== undefined && location >= 0) {
+                    const data = attributes[name];
+                    // Create buffer for this attribute
+                    const buffer = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, data.data, gl.DYNAMIC_DRAW);
+
+                    gl.enableVertexAttribArray(location);
+                    gl.vertexAttribPointer(location, data.size, data.type || gl.FLOAT, false, 0, 0);
                 }
-            }
-        });
+            });
 
-        // Set common uniforms if they exist
-        if (program.uniforms['u_resolution']) {
-            gl.uniform2f(program.uniforms['u_resolution'], this.width, this.height);
-        }
-        if (program.uniforms['u_globalAlpha']) {
-            gl.uniform1f(program.uniforms['u_globalAlpha'], this.state.globalAlpha);
-        }
+            // Set uniforms
+            Object.keys(uniforms).forEach(name => {
+                const location = program.uniforms && program.uniforms[name];
+                if (location !== null && location !== undefined) {
+                    const value = uniforms[name];
+                    if (Array.isArray(value)) {
+                        switch (value.length) {
+                            case 1: gl.uniform1f(location, value[0]); break;
+                            case 2: gl.uniform2f(location, value[0], value[1]); break;
+                            case 3: gl.uniform3f(location, value[0], value[1], value[2]); break;
+                            case 4: gl.uniform4f(location, value[0], value[1], value[2], value[3]); break;
+                            default: console.warn(`Unsupported uniform array length for ${name}`);
+                        }
+                    } else if (typeof value === 'number') {
+                        gl.uniform1f(location, value);
+                    } else {
+                        console.warn(`Unsupported uniform type for ${name}:`, typeof value);
+                    }
+                }
+            });
 
-        // Draw
-        if (indices) {
-            // Create index buffer if needed
-            if (!this.customIndexBuffer) {
-                this.customIndexBuffer = gl.createBuffer();
+            // Set common uniforms if they exist
+            if (program.uniforms && program.uniforms['u_resolution']) {
+                gl.uniform2f(program.uniforms['u_resolution'], this.width, this.height);
             }
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.customIndexBuffer);
-            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.DYNAMIC_DRAW);
-            gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
-        } else {
-            gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+            if (program.uniforms && program.uniforms['u_globalAlpha']) {
+                gl.uniform1f(program.uniforms['u_globalAlpha'], this.state.globalAlpha);
+            }
+
+            // Draw
+            if (indices) {
+                // Create index buffer if needed
+                if (!this.customIndexBuffer) {
+                    this.customIndexBuffer = gl.createBuffer();
+                }
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.customIndexBuffer);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.DYNAMIC_DRAW);
+                gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+            } else {
+                gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
+            }
+
+            // Check for errors after drawing
+            this.checkGLError(`drawWithShader(${shaderName})`);
+
+        } catch (e) {
+            console.error(`Error in drawWithShader(${shaderName}):`, e);
+            if (this.gl && this.gl.isContextLost()) {
+                console.warn('Context lost during drawWithShader');
+                this.contextLost = true;
+            }
         }
     }
 
@@ -2949,26 +3353,87 @@ class WebGLCanvas {
     * Set a higher batch size for better performance
     */
     setBatchSize(size) {
-        this.options.batchSize = size;
-        // Recreate buffers with new size
-        this.createBatchBuffers();
+        // Limit batch size to prevent memory issues that could cause context loss
+        const maxSafeSize = 5000; // Reduced from potentially 10000+
+        this.options.batchSize = Math.min(size, maxSafeSize);
+
+        console.log(`Batch size set to ${this.options.batchSize}`);
+
+        // Recreate buffers with new size if WebGL is available
+        if (this.gl && !this.isContextLost()) {
+            this.safeWebGLOperation(() => {
+                this.createBatchBuffers();
+            }, 'batch buffer recreation');
+        }
     }
 
+    /*
+    * Auto-adjust batch size based on performance
+    */
+    autoAdjustBatchSize() {
+        if (this.contextLossCount > 2) {
+            // If we've had multiple context losses, reduce batch size
+            const newSize = Math.max(1000, this.options.batchSize * 0.7);
+            console.warn(`Reducing batch size to ${newSize} due to context instability`);
+            this.setBatchSize(newSize);
+        }
+    }
+
+    /*
+    * Enhanced error checking with context loss detection
+    */
     checkGLError(operation) {
+        if (!this.gl) return true;
+
         const error = this.gl.getError();
         if (error !== this.gl.NO_ERROR) {
-            console.error(`WebGL error after ${operation}: ${error}`);
+            let errorName = 'UNKNOWN_ERROR';
+            switch (error) {
+                case this.gl.INVALID_ENUM: errorName = 'INVALID_ENUM'; break;
+                case this.gl.INVALID_VALUE: errorName = 'INVALID_VALUE'; break;
+                case this.gl.INVALID_OPERATION: errorName = 'INVALID_OPERATION'; break;
+                case this.gl.INVALID_FRAMEBUFFER_OPERATION: errorName = 'INVALID_FRAMEBUFFER_OPERATION'; break;
+                case this.gl.OUT_OF_MEMORY: errorName = 'OUT_OF_MEMORY'; break;
+                case this.gl.CONTEXT_LOST_WEBGL:
+                    errorName = 'CONTEXT_LOST_WEBGL';
+                    this.contextLost = true;
+                    console.error('WebGL context lost detected in checkGLError');
+                    break;
+            }
+
+            console.error(`WebGL error after ${operation}: ${errorName} (${error})`);
+
+            // Only log additional info if context is not lost
+            if (!this.contextLost) {
+                try {
+                    console.error('Current program:', this.gl.getParameter(this.gl.CURRENT_PROGRAM));
+                    console.error('Viewport:', this.gl.getParameter(this.gl.VIEWPORT));
+                } catch (e) {
+                    console.error('Could not get GL parameters:', e);
+                }
+            }
+
             return false;
         }
         return true;
     }
 
     /**
- * Dispose of all WebGL resources and clean up
- * Call this when you're done with the canvas to prevent memory leaks
- */
+     * Dispose of all WebGL resources and clean up
+     * Call this when you're done with the canvas to prevent memory leaks
+     */
     dispose() {
-        if (!this.gl) return; // Already disposed
+        // Set flag to prevent further operations
+        this.disposing = true;
+
+        // Clear context monitoring
+        if (this.contextHealthCheck) {
+            clearInterval(this.contextHealthCheck);
+            this.contextHealthCheck = null;
+        }
+
+        // Clear all timers
+        this.clearAllTimers();
 
         // Cancel any running animation frames
         if (this.animationId) {
@@ -2976,74 +3441,120 @@ class WebGLCanvas {
             this.animationId = null;
         }
 
-        // Clean up batch buffers
-        Object.values(this.batchBuffers).forEach(batch => {
-            if (batch.vertices) this.gl.deleteBuffer(batch.vertices);
-            if (batch.colors) this.gl.deleteBuffer(batch.colors);
-            if (batch.indices) this.gl.deleteBuffer(batch.indices);
-            if (batch.centers) this.gl.deleteBuffer(batch.centers);
-            if (batch.radii) this.gl.deleteBuffer(batch.radii);
-            if (batch.texCoords) this.gl.deleteBuffer(batch.texCoords);
-        });
+        // Only try to delete WebGL resources if context exists and is not lost
+        if (this.gl && !this.isContextLost()) {
+            try {
+                // Flush any pending operations first
+                this.flush();
 
-        // Clean up custom buffers
-        if (this.customVertexBuffer) {
-            this.gl.deleteBuffer(this.customVertexBuffer);
-            this.customVertexBuffer = null;
-        }
-        if (this.customIndexBuffer) {
-            this.gl.deleteBuffer(this.customIndexBuffer);
-            this.customIndexBuffer = null;
-        }
+                // Clean up batch buffers
+                if (this.batchBuffers) {
+                    Object.values(this.batchBuffers).forEach(batch => {
+                        if (batch) {
+                            if (batch.vertices && this.gl.isBuffer(batch.vertices)) this.gl.deleteBuffer(batch.vertices);
+                            if (batch.colors && this.gl.isBuffer(batch.colors)) this.gl.deleteBuffer(batch.colors);
+                            if (batch.indices && this.gl.isBuffer(batch.indices)) this.gl.deleteBuffer(batch.indices);
+                            if (batch.centers && this.gl.isBuffer(batch.centers)) this.gl.deleteBuffer(batch.centers);
+                            if (batch.radii && this.gl.isBuffer(batch.radii)) this.gl.deleteBuffer(batch.radii);
+                            if (batch.texCoords && this.gl.isBuffer(batch.texCoords)) this.gl.deleteBuffer(batch.texCoords);
+                        }
+                    });
+                }
 
-        // Clean up shaders
-        Object.values(this.shaders).forEach(shader => {
-            if (shader) this.gl.deleteProgram(shader);
-        });
+                // Clean up custom buffers
+                if (this.customVertexBuffer && this.gl.isBuffer(this.customVertexBuffer)) {
+                    this.gl.deleteBuffer(this.customVertexBuffer);
+                }
+                if (this.customIndexBuffer && this.gl.isBuffer(this.customIndexBuffer)) {
+                    this.gl.deleteBuffer(this.customIndexBuffer);
+                }
 
-        // Clean up textures
-        this.textureCache.forEach((texture) => {
-            this.gl.deleteTexture(texture);
-        });
-        this.textureCache.clear();
+                // Clean up shaders
+                if (this.shaders) {
+                    Object.values(this.shaders).forEach(shader => {
+                        if (shader && this.gl.isProgram(shader)) {
+                            this.gl.deleteProgram(shader);
+                        }
+                    });
+                }
 
-        // Clean up font cache
-        this.fontCache.clear();
-
-        // Clear all batch arrays
-        this.batches = {
-            rectangles: [],
-            circles: [],
-            ellipses: [],
-            lines: [],
-            images: [],
-            text: []
-        };
-
-        // Reset batch buffers
-        this.batchBuffers = {};
-
-        // Clear paths and state
-        this.currentPath = [];
-        this.stateStack = [];
-
-        // Remove fullscreen elements and handlers
-        this.cleanup();
-
-        // Force WebGL context loss to fully reset
-        const extension = this.gl.getExtension('WEBGL_lose_context');
-        if (extension) {
-            extension.loseContext();
+                // Clean up textures
+                if (this.textureCache) {
+                    this.textureCache.forEach((texture) => {
+                        if (this.gl.isTexture(texture)) {
+                            this.gl.deleteTexture(texture);
+                        }
+                    });
+                }
+            } catch (e) {
+                console.warn('Error during WebGL cleanup (context may be lost):', e);
+            }
         }
 
+        // Don't force context loss in dispose - let it happen naturally
         // Clear references
         this.gl = null;
-        this.canvas = null;
         this.ctx = null;
         this.shaders = {};
         this.state = null;
+        this.contextLost = false;
+        this.disposing = false;
+
+        // Clear other references...
+        if (this.textureCache) this.textureCache.clear();
+        if (this.fontCache) this.fontCache.clear();
 
         console.log('WebGLCanvas disposed successfully');
+    }
+
+    /*
+     * Add safeguard to all WebGL operations
+     */
+    safeWebGLOperation(operation, errorMessage = 'WebGL operation failed') {
+        if (this.disposing) {
+            return false;
+        }
+
+        if (this.isContextLost()) {
+            console.warn(`Skipping ${errorMessage} - WebGL context is lost`);
+            return false;
+        }
+
+        if (!this.gl) {
+            console.warn(`Skipping ${errorMessage} - WebGL context not available`);
+            return false;
+        }
+
+        try {
+            // Check context health before operation
+            if (this.gl.isContextLost()) {
+                console.warn(`Context lost before ${errorMessage}`);
+                this.contextLost = true;
+                return false;
+            }
+
+            const result = operation();
+
+            // Check for errors after operation
+            this.checkGLError(errorMessage);
+
+            // Check context health after operation
+            if (this.gl.isContextLost()) {
+                console.warn(`Context lost after ${errorMessage}`);
+                this.contextLost = true;
+                return false;
+            }
+
+            return result;
+        } catch (e) {
+            if (this.gl && this.gl.isContextLost()) {
+                console.warn(`Context lost during ${errorMessage}`);
+                this.contextLost = true;
+            } else {
+                console.error(`Error during ${errorMessage}:`, e);
+            }
+            return false;
+        }
     }
 
     /*
