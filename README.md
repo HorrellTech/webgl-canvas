@@ -462,7 +462,7 @@ Advanced GPU effects with custom shaders:
 
 ```javascript
 // Kaleidoscope Shader Effect
-const ctx = new WebGLCanvas(canvas);
+const ctx = new WebGLCanvas(canvas, {enableFullscreen: true});
 
 const kaleidoscopeVertexShader = `
 precision mediump float;
@@ -512,29 +512,29 @@ void main() {
     vec2 uv = v_uv;
     
     // Apply kaleidoscope transformation
-    vec2 kUv = kaleidoscope(uv, 30.0);
+    vec2 kUv = kaleidoscope(uv, 200.0);
     
     // Create animated pattern
     float pattern = 0.0;
-    pattern += sin(kUv.x * 40.0 + u_time);
-    pattern += cos(kUv.y * 25.0 + u_time * 1.3);
+    pattern += sin(kUv.x * 2.0 + u_time);
+    pattern += cos(kUv.y * 1.0 + u_time * 1.3);
     pattern += sin((kUv.x + kUv.y) * 10.0 + u_time * 0.8);
     
     // Add radial component
     vec2 center = vec2(0.5, 0.5);
     float dist = distance(kUv, center);
-    pattern += sin(dist * 25.0 - u_time * 2.0);
+    pattern += sin(dist * 2.0 - u_time * 2.0);
     
-    pattern = pattern / 4.0;
+    pattern = pattern / 0.08;
     
     // Create rainbow colors
     vec3 color;
-    color.r = 0.5 + 0.5 * sin(pattern + u_time);
-    color.g = 0.5 + 0.5 * sin(pattern + u_time + 2.094);
-    color.b = 0.5 + 0.5 * sin(pattern + u_time + 4.188);
+    color.r = 0.9 + 0.5 * sin(pattern + u_time);
+    color.g = 0.5 + 0.7 * sin(pattern + u_time + 2.094);
+    color.b = 0.3 + 0.5 * sin(pattern + u_time + 4.188);
     
     // Add some brightness variation
-    float brightness = 0.8 + 0.2 * sin(pattern * 3.0);
+    float brightness = 1.0 + 0.8 * sin(pattern * 5.0);
     color *= brightness;
     
     gl_FragColor = vec4(color, v_color.a);
@@ -553,7 +553,7 @@ try {
 
     function animate() {
         ctx.clear();
-        time += 0.1;
+        time += 0.001;
         
         // Fill the entire canvas with one big rectangle using the shader
         const quad = ctx.createQuad(0, 0, canvas.width, canvas.height);
