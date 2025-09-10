@@ -2604,7 +2604,7 @@ class WebGLCanvas {
                         currentX, currentY,
                         command.cpx, command.cpy,
                         command.x, command.y,
-                        8 // number of segments
+                        16 // number of segments
                     );
                     currentPolygon.push(...quadPoints.slice(1)); // Skip first point as it's current position
                     currentX = command.x;
@@ -2618,7 +2618,7 @@ class WebGLCanvas {
                         command.cp1x, command.cp1y,
                         command.cp2x, command.cp2y,
                         command.x, command.y,
-                        8 // number of segments
+                        16 // number of segments
                     );
                     currentPolygon.push(...bezierPoints.slice(1)); // Skip first point
                     currentX = command.x;
@@ -2632,7 +2632,7 @@ class WebGLCanvas {
                         command.startAngle,
                         command.endAngle,
                         command.counterclockwise,
-                        16 // number of segments
+                        32 // number of segments
                     );
                     if (arcPoints.length > 0) {
                         currentPolygon.push(...arcPoints);

@@ -19,8 +19,8 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #1a1a1a;
-            color: #ffffff;
+            background: #1a1d23;
+            color: #e1e5e9;
             height: 100vh;
             overflow: hidden;
             padding-bottom: 30px;
@@ -29,7 +29,7 @@
         .playground-container {
             display: flex;
             height: 100vh;
-            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            background: linear-gradient(135deg, #2c3e50 0%, #3d5a80 100%);
             padding-bottom: 30px;
         }
 
@@ -37,35 +37,66 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            background: #1e1e1e;
-            border-right: 1px solid #444;
+            background: #1e2328;
+            border-right: 1px solid #3d4a5c;
         }
 
         .toolbar {
             display: flex;
             align-items: center;
             padding: 10px 15px;
-            background: #2d2d30;
-            border-bottom: 1px solid #444;
+            background: #252a30;
+            border-bottom: 1px solid #3d4a5c;
+            gap: 15px;
+            justify-content: space-between;
+        }
+
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .toolbar-right {
+            display: flex;
+            align-items: center;
             gap: 15px;
         }
 
         .toolbar button {
             padding: 8px 16px;
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
+            background: linear-gradient(135deg, #4a6fa5 0%, #5d7fb8 100%);
+            color: #ffffff;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 600;
+            font-weight: 500;
             transition: all 0.3s ease;
-            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 2px 8px rgba(74, 111, 165, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .toolbar button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            transition: left 0.5s;
+        }
+
+        .toolbar button:hover::before {
+            left: 100%;
         }
 
         .toolbar button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            background: linear-gradient(135deg, #5d7fb8 0%, #70a0d0 100%);
+            box-shadow: 0 4px 12px rgba(93, 127, 184, 0.4);
         }
 
         .toolbar button:active {
@@ -81,12 +112,12 @@
         .checkbox-container input[type="checkbox"] {
             width: 18px;
             height: 18px;
-            accent-color: #667eea;
+            accent-color: #5d7fb8;
         }
 
         .checkbox-container label {
             font-size: 14px;
-            color: #ccc;
+            color: #94a3b8;
             cursor: pointer;
         }
 
@@ -99,8 +130,8 @@
         .code-editor {
             width: 100%;
             height: 100%;
-            background: #1e1e1e;
-            color: #d4d4d4;
+            background: #1e2328;
+            color: #e1e5e9;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 14px;
             line-height: 1.5;
@@ -118,28 +149,28 @@
         }
 
         .code-editor::-webkit-scrollbar-track {
-            background: #252526;
+            background: #252a30;
         }
 
         .code-editor::-webkit-scrollbar-thumb {
-            background: #464647;
+            background: #3d4a5c;
             border-radius: 6px;
         }
 
         .code-editor::-webkit-scrollbar-thumb:hover {
-            background: #5a5a5a;
+            background: #4a6fa5;
         }
 
         .resizer {
             width: 8px;
-            background: #444;
+            background: #3d4a5c;
             cursor: col-resize;
             position: relative;
             transition: background-color 0.2s ease;
         }
 
         .resizer:hover {
-            background: #667eea;
+            background: #5d7fb8;
         }
 
         .resizer::before {
@@ -150,7 +181,7 @@
             transform: translate(-50%, -50%);
             width: 3px;
             height: 40px;
-            background: #666;
+            background: #94a3b8;
             border-radius: 2px;
         }
 
@@ -158,17 +189,17 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            background: #2c2c2c;
+            background: #252a30;
             position: relative;
         }
 
         .canvas-header {
             padding: 10px 15px;
-            background: #2d2d30;
-            border-bottom: 1px solid #444;
+            background: #252a30;
+            border-bottom: 1px solid #3d4a5c;
             font-size: 16px;
             font-weight: 600;
-            color: #fff;
+            color: #94a3b8;
         }
 
         .canvas-container {
@@ -181,15 +212,15 @@
         }
 
         #playground-canvas {
-            border: 2px solid rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(74, 111, 165, 0.4);
             border-radius: 8px;
             background: #000;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
             transition: border-color 0.3s ease;
         }
 
         #playground-canvas:focus {
-            border-color: rgba(102, 126, 234, 0.8);
+            border-color: rgba(93, 127, 184, 0.7);
             outline: none;
         }
 
@@ -198,14 +229,14 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: rgba(220, 53, 69, 0.95);
+            background: rgba(185, 28, 28, 0.95);
             color: white;
             padding: 20px 30px;
             border-radius: 8px;
             font-size: 18px;
             font-weight: 600;
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(220, 53, 69, 0.5);
+            border: 1px solid rgba(185, 28, 28, 0.5);
             display: none;
             z-index: 1000;
         }
@@ -215,8 +246,8 @@
             align-items: center;
             justify-content: space-between;
             padding: 8px 15px;
-            background: #007acc;
-            color: white;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: #e1e5e9;
             font-size: 12px;
             flex-shrink: 0;
             position: fixed;
@@ -229,14 +260,15 @@
         .fps-counter {
             font-family: 'Consolas', 'Monaco', monospace;
             font-weight: bold;
+            color: #94a3b8;
         }
 
         .CodeMirror {
             height: 100% !important;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 14px;
-            background: #1e1e1e !important;
-            color: #d4d4d4 !important;
+            background: #1e2328 !important;
+            color: #e1e5e9 !important;
         }
 
         .examples-dropdown {
@@ -246,22 +278,23 @@
 
         .examples-select {
             padding: 8px 35px 8px 16px;
-            background: linear-gradient(45deg, #667eea, #764ba2);
+            background: linear-gradient(135deg, #3d5a80 0%, #4a6fa5 100%);
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 600;
+            font-weight: 500;
             appearance: none;
             min-width: 150px;
-            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 2px 8px rgba(61, 90, 128, 0.4);
             transition: all 0.3s ease;
         }
 
         .examples-select:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            background: linear-gradient(135deg, #4a6fa5 0%, #5d7fb8 100%);
+            box-shadow: 0 4px 12px rgba(74, 111, 165, 0.4);
         }
 
         .examples-dropdown::after {
@@ -276,7 +309,7 @@
         }
 
         .examples-select option {
-            background: #2d2d30;
+            background: #252a30;
             color: white;
             padding: 8px;
         }
@@ -285,51 +318,41 @@
             .playground-container {
                 flex-direction: column;
                 height: auto;
-                /* Allow natural height stacking */
             }
 
             .editor-panel {
                 flex: none;
-                /* Take full width, no flex shrinking */
                 height: 50vh;
-                /* Allocate half viewport height to editor for balance */
             }
 
             .canvas-panel {
                 flex: none;
-                /* Take full width */
                 height: 50vh;
-                /* Allocate half to canvas */
             }
 
             .resizer {
                 width: 100%;
                 height: 8px;
                 cursor: row-resize;
-                background: #444;
-                /* Ensure visibility */
+                background: #3d4a5c;
             }
 
             .resizer::before {
                 width: 40px;
                 height: 3px;
-                background: #667eea;
-                /* Make handle more prominent */
+                background: #5d7fb8;
             }
 
             .toolbar {
                 padding: 8px 10px;
-                /* Reduce padding for smaller screens */
             }
 
             .canvas-container {
                 padding: 10px;
-                /* Reduce padding around canvas */
             }
 
             .status-bar {
                 position: static;
-                /* Remove fixed positioning to avoid overlap */
                 padding: 5px 10px;
             }
         }
@@ -346,15 +369,19 @@
     <div class="playground-container">
         <div class="editor-panel">
             <div class="toolbar">
-                <button id="run-btn">▶️ Run Code</button>
-                <div class="examples-dropdown">
-                    <select id="examples-select" class="examples-select">
-                        <option value="">Select Example...</option>
-                    </select>
+                <div class="toolbar-left">
+                    <div class="examples-dropdown">
+                        <select id="examples-select" class="examples-select">
+                            <option value="">Select Example...</option>
+                        </select>
+                    </div>
+                    <!--div class="checkbox-container">
+                        <input type="checkbox" id="auto-run" checked>
+                        <label for="auto-run">Auto Run</label>
+                    </div-->
                 </div>
-                <div class="checkbox-container">
-                    <input type="checkbox" id="auto-run" checked>
-                    <label for="auto-run">Auto Run</label>
+                <div class="toolbar-right">
+                    <button id="run-btn">▶️ Run Code</button>
                 </div>
             </div>
             <div class="editor-wrapper">
@@ -518,12 +545,12 @@
                         console.log('CodeMirror initialized:', this.codeMirror);
 
                         // Auto-run on change
-                        this.codeMirror.on('change', () => {
+                        /*this.codeMirror.on('change', () => {
                             if (this.autoRunCheckbox.checked) {
                                 clearTimeout(this.autoRunTimer);
                                 this.autoRunTimer = setTimeout(() => this.runCode(), 500);
                             }
-                        });
+                        });*/
 
                         // Force refresh after initialization
                         requestAnimationFrame(() => {
@@ -693,7 +720,7 @@ if (ctx.flush) ctx.flush();`;
                         }
 
                         //if (this.ctx && typeof this.ctx.dispose === 'function') {
-                            //this.ctx.dispose();
+                        //this.ctx.dispose();
                         //}
 
                         // Get code from CodeMirror or textarea
