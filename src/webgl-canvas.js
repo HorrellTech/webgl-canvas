@@ -2523,24 +2523,302 @@ class WebGLCanvas {
     }
 
     /*
-     * Render the current path
-     * @param {boolean} fill - Whether to fill (true) or stroke (false)
-     */
+ * Render the current path
+ * @param {boolean} fill - Whether to fill (true) or stroke (false)
+ */
     renderPath(fill) {
         if (this.currentPath.length === 0) return;
 
-        // Convert path to line segments for rendering
-        const segments = this.pathToSegments(this.currentPath);
-
-        for (const segment of segments) {
-            if (fill) {
-                // For filling, we'd need to triangulate the path
-                // For now, just draw lines
-                this.drawLine(segment.x1, segment.y1, segment.x2, segment.y2);
-            } else {
+        if (fill) {
+            // For filling, we need to triangulate the path
+            const triangles = this.triangulatePath(this.currentPath);
+            if (triangles.length > 0) {
+                this.renderTriangles(triangles, this.state.fillStyle);
+            }
+        } else {
+            // For stroking, convert path to line segments
+            const segments = this.pathToSegments(this.currentPath);
+            for (const segment of segments) {
                 this.drawLine(segment.x1, segment.y1, segment.x2, segment.y2);
             }
         }
+    }
+
+    /*
+     * Triangulate a path for filling
+     * Uses ear clipping algorithm for simple polygons
+     * @param {Array} path - Path commands
+     * @return {Array} - Array of triangles (each triangle is 6 values: x1,y1,x2,y2,x3,y3)
+     */
+    triangulatePath(path) {
+        // Convert path to polygon points
+        const polygons = this.pathToPolygons(path);
+        const triangles = [];
+
+        for (const polygon of polygons) {
+            if (polygon.length < 3) continue;
+
+            // Simple ear clipping triangulation
+            const polyTriangles = this.earClipping(polygon);
+            triangles.push(...polyTriangles);
+        }
+
+        return triangles;
+    }
+
+    /*
+     * Convert path commands to polygon point arrays
+     * @param {Array} path - Path commands
+     * @return {Array} - Array of polygons (each polygon is array of {x, y} points)
+     */
+    pathToPolygons(path) {
+        const polygons = [];
+        let currentPolygon = [];
+        let currentX = 0, currentY = 0;
+        let startX = 0, startY = 0;
+
+        for (const command of path) {
+            switch (command.type) {
+                case 'moveTo':
+                    // Start new polygon if current one has points
+                    if (currentPolygon.length > 0) {
+                        polygons.push([...currentPolygon]);
+                        currentPolygon = [];
+                    }
+                    currentX = command.x;
+                    currentY = command.y;
+                    startX = command.x;
+                    startY = command.y;
+                    currentPolygon.push({ x: currentX, y: currentY });
+                    break;
+
+                case 'lineTo':
+                    currentX = command.x;
+                    currentY = command.y;
+                    currentPolygon.push({ x: currentX, y: currentY });
+                    break;
+
+                case 'quadraticCurveTo':
+                    // Approximate curve with line segments
+                    const quadPoints = this.approximateQuadraticPoints(
+                        currentX, currentY,
+                        command.cpx, command.cpy,
+                        command.x, command.y,
+                        8 // number of segments
+                    );
+                    currentPolygon.push(...quadPoints.slice(1)); // Skip first point as it's current position
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'bezierCurveTo':
+                    // Approximate curve with line segments
+                    const bezierPoints = this.approximateBezierPoints(
+                        currentX, currentY,
+                        command.cp1x, command.cp1y,
+                        command.cp2x, command.cp2y,
+                        command.x, command.y,
+                        8 // number of segments
+                    );
+                    currentPolygon.push(...bezierPoints.slice(1)); // Skip first point
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'arc':
+                    const arcPoints = this.approximateArcPoints(
+                        command.x, command.y,
+                        command.radius,
+                        command.startAngle,
+                        command.endAngle,
+                        command.counterclockwise,
+                        16 // number of segments
+                    );
+                    if (arcPoints.length > 0) {
+                        currentPolygon.push(...arcPoints);
+                        const lastPoint = arcPoints[arcPoints.length - 1];
+                        currentX = lastPoint.x;
+                        currentY = lastPoint.y;
+                    }
+                    break;
+
+                case 'close':
+                    if (currentPolygon.length > 0) {
+                        // Close the polygon by ensuring it ends where it started
+                        const first = currentPolygon[0];
+                        const last = currentPolygon[currentPolygon.length - 1];
+                        if (Math.abs(first.x - last.x) > 0.001 || Math.abs(first.y - last.y) > 0.001) {
+                            currentPolygon.push({ x: startX, y: startY });
+                        }
+                    }
+                    currentX = startX;
+                    currentY = startY;
+                    break;
+            }
+        }
+
+        // Add final polygon if it has points
+        if (currentPolygon.length > 0) {
+            polygons.push(currentPolygon);
+        }
+
+        return polygons;
+    }
+
+    /*
+     * Simple ear clipping triangulation
+     * @param {Array} polygon - Array of {x, y} points
+     * @return {Array} - Array of triangles
+     */
+    earClipping(polygon) {
+        if (polygon.length < 3) return [];
+        if (polygon.length === 3) {
+            return [polygon[0], polygon[1], polygon[2]];
+        }
+
+        const triangles = [];
+        const vertices = [...polygon];
+
+        // Remove consecutive duplicate points
+        for (let i = vertices.length - 1; i >= 0; i--) {
+            const current = vertices[i];
+            const next = vertices[(i + 1) % vertices.length];
+            if (Math.abs(current.x - next.x) < 0.001 && Math.abs(current.y - next.y) < 0.001) {
+                vertices.splice(i, 1);
+            }
+        }
+
+        if (vertices.length < 3) return [];
+
+        // Simple fan triangulation for convex polygons
+        // This is a simplified version - full ear clipping is more complex
+        const center = vertices[0];
+        for (let i = 1; i < vertices.length - 1; i++) {
+            triangles.push(center, vertices[i], vertices[i + 1]);
+        }
+
+        return triangles;
+    }
+
+    /*
+     * Render triangles to the screen
+     * @param {Array} triangles - Array of triangle vertices
+     * @param {Array} color - RGBA color array
+     */
+    renderTriangles(triangles, color) {
+        const batch = this.batchBuffers.rectangles; // Reuse rectangle batch buffer
+
+        for (let i = 0; i < triangles.length; i += 3) {
+            const p1 = triangles[i];
+            const p2 = triangles[i + 1];
+            const p3 = triangles[i + 2];
+
+            // Check if batch is full (need 3 vertices, but buffer expects quads)
+            if (batch.currentVertices + 4 > batch.maxVertices) {
+                this.flushRectangles();
+                batch.currentVertices = 0;
+                batch.currentIndices = 0;
+            }
+
+            // Transform triangle vertices
+            const [x1, y1] = this.transformPoint(p1.x, p1.y);
+            const [x2, y2] = this.transformPoint(p2.x, p2.y);
+            const [x3, y3] = this.transformPoint(p3.x, p3.y);
+
+            // Create a degenerate quad by duplicating the third vertex
+            const vertexIndex = batch.currentVertices;
+
+            // Add vertices (triangle + duplicate third point to make quad)
+            batch.vertexData[vertexIndex * 2 + 0] = x1;
+            batch.vertexData[vertexIndex * 2 + 1] = y1;
+            batch.vertexData[vertexIndex * 2 + 2] = x2;
+            batch.vertexData[vertexIndex * 2 + 3] = y2;
+            batch.vertexData[vertexIndex * 2 + 4] = x3;
+            batch.vertexData[vertexIndex * 2 + 5] = y3;
+            batch.vertexData[vertexIndex * 2 + 6] = x3; // Duplicate third point
+            batch.vertexData[vertexIndex * 2 + 7] = y3;
+
+            // Apply global alpha to colors
+            const finalColor = [
+                color[0],
+                color[1],
+                color[2],
+                color[3] * this.state.globalAlpha
+            ];
+
+            // Add colors for all 4 vertices
+            for (let j = 0; j < 4; j++) {
+                batch.colorData[(vertexIndex + j) * 4 + 0] = finalColor[0];
+                batch.colorData[(vertexIndex + j) * 4 + 1] = finalColor[1];
+                batch.colorData[(vertexIndex + j) * 4 + 2] = finalColor[2];
+                batch.colorData[(vertexIndex + j) * 4 + 3] = finalColor[3];
+            }
+
+            // Add indices to form triangle (first 3 indices form the triangle)
+            const indexBase = batch.currentVertices;
+            const indexOffset = batch.currentIndices;
+            batch.indexData[indexOffset + 0] = indexBase + 0;
+            batch.indexData[indexOffset + 1] = indexBase + 1;
+            batch.indexData[indexOffset + 2] = indexBase + 2;
+            // Degenerate second triangle (all same point)
+            batch.indexData[indexOffset + 3] = indexBase + 2;
+            batch.indexData[indexOffset + 4] = indexBase + 3;
+            batch.indexData[indexOffset + 5] = indexBase + 2;
+
+            batch.currentVertices += 4;
+            batch.currentIndices += 6;
+        }
+    }
+
+    /*
+     * Approximate quadratic curve as points
+     */
+    approximateQuadraticPoints(x0, y0, cx, cy, x1, y1, segments) {
+        const points = [];
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const point = this.quadraticBezier(x0, y0, cx, cy, x1, y1, t);
+            points.push({ x: point.x, y: point.y });
+        }
+        return points;
+    }
+
+    /*
+     * Approximate cubic bezier curve as points
+     */
+    approximateBezierPoints(x0, y0, cx1, cy1, cx2, cy2, x1, y1, segments) {
+        const points = [];
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const point = this.cubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t);
+            points.push({ x: point.x, y: point.y });
+        }
+        return points;
+    }
+
+    /*
+     * Approximate arc as points
+     */
+    approximateArcPoints(cx, cy, radius, startAngle, endAngle, counterclockwise, segments) {
+        const points = [];
+
+        let totalAngle = endAngle - startAngle;
+        if (counterclockwise) {
+            if (totalAngle > 0) totalAngle -= 2 * Math.PI;
+        } else {
+            if (totalAngle < 0) totalAngle += 2 * Math.PI;
+        }
+
+        const angleStep = totalAngle / segments;
+
+        for (let i = 0; i <= segments; i++) {
+            const angle = startAngle + angleStep * i;
+            const x = cx + Math.cos(angle) * radius;
+            const y = cy + Math.sin(angle) * radius;
+            points.push({ x, y });
+        }
+
+        return points;
     }
 
     /*
