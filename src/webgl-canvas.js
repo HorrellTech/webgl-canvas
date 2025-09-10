@@ -508,40 +508,45 @@ class WebGLCanvas {
         }
     `;
 
-        // Simple bloom extract shader
+        // Fixed bloom extract shader with better threshold handling
         const bloomExtractFragmentShader = `
-        precision mediump float;
-        uniform sampler2D u_texture;
-        uniform float u_bloomThreshold;
-        varying vec2 v_texCoord;
+    precision mediump float;
+    uniform sampler2D u_texture;
+    uniform float u_bloomThreshold;
+    varying vec2 v_texCoord;
+    
+    void main() {
+        vec4 color = texture2D(u_texture, v_texCoord);
+        float brightness = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
         
-        void main() {
-            vec4 color = texture2D(u_texture, v_texCoord);
-            float brightness = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
-            
-            if(brightness > u_bloomThreshold) {
-                gl_FragColor = color * (brightness - u_bloomThreshold);
-            } else {
-                gl_FragColor = vec4(0.0);
-            }
+        // Only output bright areas above threshold
+        if(brightness > u_bloomThreshold) {
+            // Scale the color by how much it exceeds the threshold
+            float excess = brightness - u_bloomThreshold;
+            gl_FragColor = vec4(color.rgb * excess / brightness, color.a);
+        } else {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
         }
-    `;
+    }
+`;
 
-        // Bloom combine shader
+        // Fixed bloom combine shader
         const bloomCombineFragmentShader = `
-        precision mediump float;
-        uniform sampler2D u_texture;
-        uniform sampler2D u_bloomTexture;
-        uniform float u_bloomStrength;
-        varying vec2 v_texCoord;
+    precision mediump float;
+    uniform sampler2D u_texture;
+    uniform sampler2D u_bloomTexture;
+    uniform float u_bloomStrength;
+    varying vec2 v_texCoord;
+    
+    void main() {
+        vec3 original = texture2D(u_texture, v_texCoord).rgb;
+        vec3 bloom = texture2D(u_bloomTexture, v_texCoord).rgb;
         
-        void main() {
-            vec3 original = texture2D(u_texture, v_texCoord).rgb;
-            vec3 bloom = texture2D(u_bloomTexture, v_texCoord).rgb;
-            
-            gl_FragColor = vec4(original + bloom * u_bloomStrength, 1.0);
-        }
-    `;
+        // Add bloom to original with strength multiplier
+        vec3 result = original + bloom * u_bloomStrength;
+        gl_FragColor = vec4(result, 1.0);
+    }
+`;
 
         // FXAA antialiasing fragment shader (simplified)
         const fxaaFragmentShader = `
@@ -803,22 +808,28 @@ class WebGLCanvas {
 
         const gl = this.gl;
 
-        // Start with the first framebuffer's texture (where we just rendered the scene)
+        // For bloom, we need special handling with multiple passes
+        const hasBloom = this.postProcessing.effects.some(e =>
+            e.name === 'bloomExtract' || e.name === 'bloomCombine'
+        );
+
+        if (hasBloom) {
+            this.renderBloomEffect();
+            return;
+        }
+
+        // Original post-processing for non-bloom effects
         let inputTexture = this.postProcessing.tempTextures[0];
         let sourceFramebuffer = 0;
         let targetFramebuffer = 1;
 
-        // Process each effect
         for (let i = 0; i < this.postProcessing.effects.length; i++) {
             const effect = this.postProcessing.effects[i];
             const isLastEffect = i === this.postProcessing.effects.length - 1;
 
-            // Determine output target
             if (isLastEffect) {
-                // Last effect renders to screen
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             } else {
-                // Render to alternate framebuffer
                 gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcessing.framebuffers[targetFramebuffer]);
             }
 
@@ -827,15 +838,108 @@ class WebGLCanvas {
 
             this.renderPostEffect(effect, inputTexture);
 
-            // Swap framebuffers for next effect
             if (!isLastEffect) {
                 inputTexture = this.postProcessing.tempTextures[targetFramebuffer];
-                // Swap source and target
                 const temp = sourceFramebuffer;
                 sourceFramebuffer = targetFramebuffer;
                 targetFramebuffer = temp;
             }
         }
+    }
+
+    /*
+ * Specialized bloom rendering with proper multi-pass setup
+ */
+    renderBloomEffect() {
+        const gl = this.gl;
+
+        // Create additional framebuffer for bloom if needed
+        if (!this.bloomFramebuffer) {
+            this.bloomFramebuffer = gl.createFramebuffer();
+            this.bloomTexture = gl.createTexture();
+
+            gl.bindTexture(gl.TEXTURE_2D, this.bloomTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.width, this.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFramebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.bloomTexture, 0);
+        }
+
+        // Get bloom parameters
+        const extractEffect = this.postProcessing.effects.find(e => e.name === 'bloomExtract');
+        const blurEffect = this.postProcessing.effects.find(e => e.name === 'blur');
+        const combineEffect = this.postProcessing.effects.find(e => e.name === 'bloomCombine');
+
+        const threshold = extractEffect ? extractEffect.parameters.threshold : 0.5;
+        const blurRadius = blurEffect ? blurEffect.parameters.radius : 2.0;
+        const strength = combineEffect ? combineEffect.parameters.strength : 1.0;
+
+        // Step 1: Extract bright areas to bloom framebuffer
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFramebuffer);
+        gl.viewport(0, 0, this.width, this.height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        const extractProgram = this.shaders.postBloomExtract;
+        gl.useProgram(extractProgram);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.postProcessing.tempTextures[0]);
+        gl.uniform1i(gl.getUniformLocation(extractProgram, 'u_texture'), 0);
+        gl.uniform1f(gl.getUniformLocation(extractProgram, 'u_bloomThreshold'), threshold);
+
+        this.renderFullscreenQuad(extractProgram);
+
+        // Step 2: Blur the bright areas (horizontal pass)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcessing.framebuffers[0]);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        const blurProgram = this.shaders.postBlur;
+        gl.useProgram(blurProgram);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.bloomTexture);
+        gl.uniform1i(gl.getUniformLocation(blurProgram, 'u_texture'), 0);
+        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_resolution'), this.width, this.height);
+        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_direction'), 1.0, 0.0);
+        gl.uniform1f(gl.getUniformLocation(blurProgram, 'u_blurRadius'), blurRadius);
+
+        this.renderFullscreenQuad(blurProgram);
+
+        // Step 3: Blur the bright areas (vertical pass)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFramebuffer);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.postProcessing.tempTextures[0]);
+        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_direction'), 0.0, 1.0);
+
+        this.renderFullscreenQuad(blurProgram);
+
+        // Step 4: Combine original scene with bloom
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, this.width, this.height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        const combineProgram = this.shaders.postBloomCombine;
+        gl.useProgram(combineProgram);
+
+        // Bind original scene texture
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.postProcessing.tempTextures[0]);
+        gl.uniform1i(gl.getUniformLocation(combineProgram, 'u_texture'), 0);
+
+        // Bind bloom texture
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this.bloomTexture);
+        gl.uniform1i(gl.getUniformLocation(combineProgram, 'u_bloomTexture'), 1);
+
+        gl.uniform1f(gl.getUniformLocation(combineProgram, 'u_bloomStrength'), strength);
+
+        this.renderFullscreenQuad(combineProgram);
     }
 
     /*
@@ -2501,8 +2605,23 @@ class WebGLCanvas {
     }
 
     // Add bloom effect
-    addBloom(strength = 0.5, threshold = 0.7) {
-        this.addPostEffect('bloom', { strength, threshold });
+    addBloom(strength = 1.0, threshold = 0.5, blurRadius = 2.0) {
+        // Remove existing bloom effects first
+        this.removePostEffect('bloomExtract');
+        this.removePostEffect('blur');
+        this.removePostEffect('bloomCombine');
+
+        // Add bloom extract
+        this.addPostEffect('bloomExtract', { threshold });
+
+        // Add blur for the bloom texture
+        this.addPostEffect('blur', { radius: blurRadius });
+
+        // Add bloom combine
+        this.addPostEffect('bloomCombine', {
+            strength,
+            originalTexture: null // Will be set during rendering
+        });
     }
 
     // Add FXAA antialiasing
