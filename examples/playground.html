@@ -675,9 +675,15 @@ const ctx = typeof WebGLCanvas !== 'undefined' ?
 ctx.fillStyle = '#000000';
 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+// Draw a thick line across the canvas
+ctx.lineWidth = 2;
+ctx.strokeStyle = '#41b791';
+ctx.drawLine(canvas.width, 0, 0, canvas.height);
+ctx.stroke();
+
 // Draw colorful rectangles
-ctx.fillStyle = '#ff6b6b';
-ctx.fillRect(50, 50, 100, 80);
+ctx.strokeStyle = '#ff6b6b';
+ctx.strokeRect(50, 50, 100, 80);
 
 ctx.fillStyle = '#4ecdc4';
 ctx.fillRect(200, 50, 100, 80);
@@ -685,11 +691,23 @@ ctx.fillRect(200, 50, 100, 80);
 ctx.fillStyle = '#45b7d1';
 ctx.fillRect(350, 50, 100, 80);
 
+// Draw a thick line across the canvas
+ctx.lineWidth = 2;
+ctx.strokeStyle = '#41b791';
+ctx.drawLine(0, 0, canvas.width, canvas.height);
+ctx.stroke();
+
 // Draw circles
 ctx.fillStyle = '#ff9ff3';
 ctx.beginPath();
 ctx.arc(100, 200, 40, 0, Math.PI * 2);
 ctx.fill();
+
+// Draw circles
+ctx.strokeStyle = '#aa3ff3';
+ctx.beginPath();
+ctx.arc(100, 200, 40, 0, Math.PI * 2);
+ctx.stroke();
 
 ctx.fillStyle = '#54a0ff';
 ctx.beginPath();

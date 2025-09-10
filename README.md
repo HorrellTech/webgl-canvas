@@ -29,11 +29,22 @@ A comprehensive WebGL-powered 2D graphics library that provides a familiar HTML5
 - **Composite Operations** - Blending modes like source-over, multiply, screen, etc.
 - **Shadow Effects** - `shadowColor`, `shadowBlur`, `shadowOffsetX`, `shadowOffsetY`
 
+### Post-Processing Effects
+- **Blur Effects** - Gaussian blur with configurable radius
+- **Bloom/Glow Effects** - HDR bloom with threshold and intensity controls
+- **Chromatic Aberration** - RGB color channel separation for retro/glitch effects
+- **Vignette** - Darkened edges with customizable strength and radius
+- **Color Grading** - Brightness, contrast, saturation, and hue adjustments
+- **FXAA Anti-aliasing** - Fast approximate anti-aliasing for smooth edges
+- **Pixelate** - Retro pixel art effect with configurable pixel size
+- **Effect Chaining** - Combine multiple effects with automatic framebuffer management
+
 ### Performance Features
 - **Optimized Batching** - Groups similar shapes into single GPU draw calls
-- **Custom Batch Size** - Configurable batch sizes up to 10,000+ objects
+- **Custom Batch Size** - Configurable batch sizes up to 5,000 objects (with safety limits)
 - **Texture Caching** - Automatic image texture management and reuse
 - **Memory Efficient** - Smart buffer management and resource cleanup
+- **Context Loss Protection** - Robust handling of WebGL context loss/restore
 
 ### Display Features
 - **Pixel-Perfect Scaling** - Perfect for retro games and pixel art
@@ -42,10 +53,16 @@ A comprehensive WebGL-powered 2D graphics library that provides a familiar HTML5
 - **High DPI Support** - Automatic pixel density handling
 
 ### Developer Tools
-- **Custom Shaders** - Easy integration of GLSL vertex and fragment shaders
+- **Custom Shaders** - Easy integration of GLSL vertex and fragment shaders with `addShader()`
 - **Debug Mode** - Performance monitoring and batch visualization
 - **Event System** - Fullscreen enter/exit events
-- **Clean Resource Management** - Proper cleanup of WebGL resources
+- **Clean Resource Management** - Proper cleanup of WebGL resources with `dispose()`
+
+### Image Data Operations
+- **Get Image Data** - `getImageData()` reads pixels from WebGL framebuffer
+- **Put Image Data** - `putImageData()` draws pixel data to canvas
+- **Create Image Data** - `createImageData()` for creating blank ImageData
+- **Export Functions** - `toDataURL()` and `toBlob()` for saving canvas content
 
 ## 🎮 Use Cases & Examples
 
@@ -156,9 +173,9 @@ function gameLoop() {
     ctx.font = '16px Arial';
     ctx.fillText(`Bullets: ${bullets.length}`, 10, 20);
     
+    ctx.flush(); // IMPORTANT: Render all batched drawing
+    
     requestAnimationFrame(gameLoop);
-	
-	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 gameLoop();
@@ -284,9 +301,9 @@ function animateChart() {
         drawStockChart(stockData);
     }
     
+    ctx.flush(); // IMPORTANT: Render all batched drawing
+    
     setTimeout(() => requestAnimationFrame(animateChart), 50);
-	
-	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 animateChart();
@@ -339,7 +356,6 @@ function emitParticles(x, y, count = 50) {
 }
 
 function updateParticles() {
-    // Update and filter out dead particles
     particles = particles.filter(particle => updateParticle(particle));
 }
 
@@ -380,9 +396,9 @@ function particleLoop() {
     ctx.fillText(`Particles: ${particles.length}`, 10, 20);
     ctx.fillText('Click to emit burst, move mouse to emit trail', 10, 40);
     
+    ctx.flush(); // IMPORTANT: Render all batched drawing
+    
     requestAnimationFrame(particleLoop);
-	
-	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 particleLoop();
@@ -400,6 +416,10 @@ function drawFlowField(ctx) {
     
     // Clear with gradient background
     const gradient = ctx.createRadialGradient(400, 300, 0, 400, 300, 400);
+    gradient.colorStops = [
+        { offset: 0, color: [0.1, 0.1, 0.3, 1] },
+        { offset: 1, color: [0.05, 0.05, 0.15, 1] }
+    ];
     
     ctx.fillStyle = gradient;
     ctx.fillCanvas();
@@ -435,7 +455,11 @@ function drawFlowField(ctx) {
         const orbSize = 10 + Math.sin(time * 2 + i) * 5;
         
         const orbGradient = ctx.createRadialGradient(orbX, orbY, 0, orbX, orbY, orbSize * 2);
-		
+        orbGradient.colorStops = [
+            { offset: 0, color: [1, 1, 1, 0.8] },
+            { offset: 1, color: [0.3, 0.6, 1, 0] }
+        ];
+        
         ctx.fillStyle = orbGradient;
         ctx.fillCircle(orbX, orbY, orbSize * 2);
     }
@@ -448,9 +472,8 @@ function drawFlowField(ctx) {
 
 function flowFieldAnimation() {
     drawFlowField(ctx);
+    ctx.flush(); // IMPORTANT: Render all batched drawing
     requestAnimationFrame(flowFieldAnimation);
-	
-	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 flowFieldAnimation();
@@ -461,171 +484,9 @@ flowFieldAnimation();
 Advanced GPU effects with custom shaders:
 
 ```javascript
-// Kaleidoscope Shader Effect
-const ctx = new WebGLCanvas(canvas, {enableFullscreen: true});
+const ctx = new WebGLCanvas(canvas, { enableFullscreen: true });
 
-const kaleidoscopeVertexShader = `
-precision mediump float;
-attribute vec2 a_position;
-attribute vec4 a_color;
-uniform vec2 u_resolution;
-varying vec4 v_color;
-varying vec2 v_uv;
-
-void main() {
-    vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
-    normalized.y = -normalized.y;
-    
-    gl_Position = vec4(normalized, 0, 1);
-    v_color = a_color;
-    v_uv = a_position / u_resolution;
-}
-`;
-
-const kaleidoscopeFragmentShader = `
-precision mediump float;
-uniform float u_time;
-uniform vec2 u_resolution;
-varying vec4 v_color;
-varying vec2 v_uv;
-
-#define PI 3.14159265359
-
-vec2 kaleidoscope(vec2 uv, float segments) {
-    vec2 center = vec2(0.5, 0.5);
-    vec2 pos = uv - center;
-    
-    float radius = length(pos);
-    float angle = atan(pos.y, pos.x);
-    
-    // Create kaleidoscope effect
-    float segment = PI * 4.0 / segments;
-    angle = mod(angle, segment);
-    if (mod(floor(atan(pos.y, pos.x) / segment), 2.0) == 1.0) {
-        angle = segment - angle;
-    }
-    
-    return vec2(cos(angle), sin(angle)) * radius + center;
-}
-
-void main() {
-    vec2 uv = v_uv;
-    
-    // Apply kaleidoscope transformation
-    vec2 kUv = kaleidoscope(uv, 200.0);
-    
-    // Create animated pattern
-    float pattern = 0.0;
-    pattern += sin(kUv.x * 2.0 + u_time);
-    pattern += cos(kUv.y * 1.0 + u_time * 1.3);
-    pattern += sin((kUv.x + kUv.y) * 10.0 + u_time * 0.8);
-    
-    // Add radial component
-    vec2 center = vec2(0.5, 0.5);
-    float dist = distance(kUv, center);
-    pattern += sin(dist * 2.0 - u_time * 2.0);
-    
-    pattern = pattern / 0.08;
-    
-    // Create rainbow colors
-    vec3 color;
-    color.r = 0.9 + 0.5 * sin(pattern + u_time);
-    color.g = 0.5 + 0.7 * sin(pattern + u_time + 2.094);
-    color.b = 0.3 + 0.5 * sin(pattern + u_time + 4.188);
-    
-    // Add some brightness variation
-    float brightness = 1.0 + 0.8 * sin(pattern * 5.0);
-    color *= brightness;
-    
-    gl_FragColor = vec4(color, v_color.a);
-}
-`;
-
-if (window.currentAnimationId) {
-    cancelAnimationFrame(window.currentAnimationId);
-}
-
-try {
-    ctx.addShader('kaleidoscope', kaleidoscopeVertexShader, kaleidoscopeFragmentShader);
-
-    let time = 0;
-    let animationId;
-
-    function animate() {
-        ctx.clear();
-        time += 0.001;
-        
-        // Fill the entire canvas with one big rectangle using the shader
-        const quad = ctx.createQuad(0, 0, canvas.width, canvas.height);
-        ctx.drawWithShader('kaleidoscope', quad.vertices, quad.indices, {
-            u_time: time,
-            u_resolution: [canvas.width, canvas.height]
-        });
-        
-        animationId = requestAnimationFrame(animate);
-    }
-
-    animationId = requestAnimationFrame(animate);
-    window.currentAnimationId = animationId;
-    
-} catch (error) {
-    console.error('Shader failed:', error);
-    
-    // Fallback animation
-    let time = 0;
-    let animationId;
-    
-    function animate() {
-        ctx.clear ? ctx.clear() : ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        time += 0.01;
-        
-        // Draw kaleidoscope pattern as fallback
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        
-        for (let layer = 0; layer < 8; layer++) {
-            const radius = (layer + 1) * 20;
-            const points = 6 + layer;
-            
-            ctx.strokeStyle = `hsl(${(layer * 45 + time * 100) % 360}, 70%, 60%)`;
-            ctx.lineWidth = 2;
-            
-            for (let i = 0; i < points; i++) {
-                const angle1 = (i / points) * Math.PI * 2 + time;
-                const angle2 = ((i + 1) / points) * Math.PI * 2 + time;
-                
-                const x1 = centerX + Math.cos(angle1) * radius;
-                const y1 = centerY + Math.sin(angle1) * radius;
-                const x2 = centerX + Math.cos(angle2) * radius;
-                const y2 = centerY + Math.sin(angle2) * radius;
-                
-                if (ctx.drawLine) {
-                    ctx.drawLine(x1, y1, x2, y2);
-                } else {
-                    ctx.beginPath();
-                    ctx.moveTo(x1, y1);
-                    ctx.lineTo(x2, y2);
-                    ctx.stroke();
-                }
-            }
-        }
-        
-        if (ctx.flush) ctx.flush();
-        animationId = requestAnimationFrame(animate);
-    }
-    
-    animationId = requestAnimationFrame(animate);
-    window.currentAnimationId = animationId;
-}
-```
-
-**Additional Shader Examples:**
-
-```javascript
-const ctx = new WebGLCanvas(canvas);
-
-// Ripple effect shader with enhanced visibility
+// Simple ripple effect shader
 const rippleVertexShader = `
     precision mediump float;
     attribute vec2 a_position;
@@ -651,187 +512,55 @@ const rippleFragmentShader = `
         vec2 center = u_mouse / u_resolution;
         float dist = distance(v_uv, center);
         
-        // More visible ripple waves (increased amplitude and adjusted decay)
-        float ripple1 = sin(dist * 30.0 - u_time * 6.0) * exp(-dist * 2.0);  // Reduced decay from 3.0 to 2.0 for longer reach
-        float ripple2 = sin(dist * 45.0 - u_time * 9.0) * exp(-dist * 3.0);  // Adjusted for balance
-        float ripple3 = sin(dist * 60.0 - u_time * 12.0) * exp(-dist * 4.0);
-
-        // Increase ripple amplitude for visibility (boosted from 0.5 to 1.0)
-        float totalRipple = (ripple1 + ripple2 * 0.6 + ripple3 * 0.3) * 2.0;  // Increased from 1.0 to 2.0 for stronger effect
-
-        // Safeguard: Prevent issues with normalize at center
-        vec2 direction = (dist > 0.001) ? normalize(v_uv - center) : vec2(0.0, 0.0);
+        // Create ripple waves
+        float ripple = sin(dist * 30.0 - u_time * 6.0) * exp(-dist * 2.0);
         
-        // Distort coordinates more dramatically (increased multiplier from 0.1 to 0.3)
-        vec2 distortedUV = v_uv + direction * abs(totalRipple) * 0.5;  // Added abs() for outward-only distortion
+        // Create water-like colors
+        vec3 waterColor = mix(vec3(0.1, 0.3, 0.9), vec3(0.0, 0.7, 1.0), ripple);
         
-        // Make checkerboard larger and more responsive to distortion
-        vec2 grid = floor(distortedUV * 5.0);  // Reduced from 10.0 to 5.0 for coarser, more visible changes
-        float checker = mod(grid.x + grid.y, 2.0);
+        // Add brightness based on ripple intensity
+        waterColor += abs(ripple) * 0.5;
         
-        // Enhanced water-like colors with more contrast
-        vec3 waterColor1 = vec3(0.1, 0.3, 0.9);
-        vec3 waterColor2 = vec3(0.0, 0.7, 1.0);
-        vec3 foamColor = vec3(1.0, 1.0, 1.0);
-        
-        vec3 baseColor = mix(waterColor1, waterColor2, checker);
-        
-        // More pronounced foam at ripple peaks
-        float foam = smoothstep(0.2, 0.9, abs(ripple1));
-        vec3 finalColor = mix(baseColor, foamColor, foam * 0.8);
-        
-        // Enhanced shimmer effect (increased range)
-        float shimmer = sin(dist * 100.0 + u_time * 10.0) * 0.5 + 0.7;  // From 0.3 to 0.5 for more variation
-        finalColor *= shimmer;
-
-        // Add ripple intensity as brightness (increased multiplier from 3.0 to 5.0)
-        finalColor += abs(totalRipple) * 8.0;  // Increased from 5.0 to 8.0 for brighter highlights
-        
-        // Debug: Add a red tint near the center to visualize mouse position
-        if (dist < 0.05) {
-            finalColor = mix(finalColor, vec3(1.0, 0.0, 0.0), 0.5);
-        }
-        
-        gl_FragColor = vec4(finalColor, 1.0);
+        gl_FragColor = vec4(waterColor, 1.0);
     }
 `;
 
-// Add the shader with error handling
 try {
+    // Add the shader
     ctx.addShader('ripple', rippleVertexShader, rippleFragmentShader);
+
+    // Mouse position tracking
+    let mouseX = canvas.width * 0.5;
+    let mouseY = canvas.height * 0.5;
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        mouseX = (e.clientX - rect.left) * scaleX;
+        mouseY = (e.clientY - rect.top) * scaleY;
+    });
+
+    function drawRippleEffect() {
+        // Create fullscreen quad
+        const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
+        
+        // Draw with ripple shader
+        const time = Date.now() * 0.005;
+        ctx.drawWithShader('ripple', vertices, indices, {
+            u_time: time,
+            u_resolution: [canvas.width, canvas.height],
+            u_mouse: [mouseX, mouseY]
+        });
+        
+        ctx.flush(); // IMPORTANT: Render all batched drawing
+        requestAnimationFrame(drawRippleEffect);
+    }
+
+    drawRippleEffect();
 } catch (error) {
-    console.error('Failed to add ripple shader:', error);
-    return; // Exit if shader fails
+    console.error('Shader failed:', error);
 }
-
-// Mouse position tracking
-let mouseX = canvas.width * 0.5;
-let mouseY = canvas.height * 0.5;
-
-canvas.addEventListener('mousemove', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    mouseX = (e.clientX - rect.left) * scaleX;
-    mouseY = (e.clientY - rect.top) * scaleY;
-});
-
-canvas.addEventListener('click', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    mouseX = (e.clientX - rect.left) * scaleX;
-    mouseY = (e.clientY - rect.top) * scaleY;
-});
-
-function drawRippleEffect() {
-    // Create fullscreen quad
-    const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
-    
-    // Draw with ripple shader
-    const time = Date.now() * 0.005;  // Reduced from 0.01 to 0.005 for slower, more visible animation
-    ctx.drawWithShader('ripple', vertices, indices, {
-        u_time: time,
-        u_resolution: [canvas.width, canvas.height],
-        u_mouse: [mouseX, mouseY]
-    });
-    
-    // Debug: Log values to console (remove after testing)
-    // console.log('Time:', time, 'Mouse:', mouseX, mouseY);
-    
-    requestAnimationFrame(drawRippleEffect);
-    
-    ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
-}
-
-// Start the animation
-drawRippleEffect();
-```
-
-**Mandelbrot Set Visualization:**
-
-```javascript
-const ctx = new WebGLCanvas(canvas);
-
-const mandelbrotVertexShader = `
-    attribute vec2 a_position;
-    uniform vec2 u_resolution;
-    varying vec2 v_uv;
-    
-    void main() {
-        vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
-        normalized.y = -normalized.y;
-        gl_Position = vec4(normalized, 0, 1);
-        v_uv = a_position / u_resolution;
-    }
-`;
-
-const mandelbrotFragmentShader = `
-    precision mediump float;
-    uniform float u_time;
-    uniform vec2 u_resolution;
-    uniform float u_zoom;
-    uniform vec2 u_center;
-    varying vec2 v_uv;
-    
-    vec2 complex_mult(vec2 a, vec2 b) {
-        return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
-    }
-    
-    float mandelbrot(vec2 c) {
-        vec2 z = vec2(0.0);
-        float iterations = 0.0;
-        
-        for (int i = 0; i < 100; i++) {
-            if (dot(z, z) > 4.0) break;
-            z = complex_mult(z, z) + c;
-            iterations++;
-        }
-        
-        return iterations / 100.0;
-    }
-    
-    void main() {
-        vec2 uv = (v_uv - 0.5) * 4.0 / u_zoom + u_center;
-        float m = mandelbrot(uv);
-        
-        vec3 color = vec3(
-            sin(m * 6.28 + u_time),
-            sin(m * 6.28 + u_time + 2.0),
-            sin(m * 6.28 + u_time + 4.0)
-        ) * 0.5 + 0.5;
-        
-        if (m > 0.99) color = vec3(0.0);
-        
-        gl_FragColor = vec4(color, 1.0);
-    }
-`;
-
-ctx.addShader('mandelbrot', mandelbrotVertexShader, mandelbrotFragmentShader);
-
-let zoom = 1.0;
-let centerX = -0.5, centerY = 0.0;
-
-function drawMandelbrot() {
-    const { vertices, indices } = ctx.createQuad(0, 0, canvas.width, canvas.height);
-    
-    // Animate zoom
-    zoom *= 1.01;
-    if (zoom > 100) zoom = 1.0;
-    
-    ctx.drawWithShader('mandelbrot', vertices, indices, {
-        u_time: Date.now() * 0.001,
-        u_resolution: [canvas.width, canvas.height],
-        u_zoom: zoom,
-        u_center: [centerX, centerY]
-    });
-    
-    requestAnimationFrame(drawMandelbrot);
-	
-	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
-}
-
-drawMandelbrot();
 ```
 
 ### 6. Scientific Visualizations
@@ -946,12 +675,441 @@ function heatmapAnimation() {
     const data = generateHeatmapData(heatmapWidth, heatmapHeight);
     drawHeatmap(data, heatmapWidth, heatmapHeight);
     
+    ctx.flush(); // IMPORTANT: Render all batched drawing
+    
     requestAnimationFrame(heatmapAnimation);
-	
-	ctx.flush(); // IMPORTANT TO RENDER THE BATCHED DRAWING
 }
 
 heatmapAnimation();
+```
+
+### 7. Post-Processing Effects & Filters
+
+Advanced GPU-based post-processing for cinematic visuals:
+
+```javascript
+const ctx = new WebGLCanvas(canvas, {
+    enableFullscreen: true
+});
+
+// Scene rendering function
+function drawGameScene() {
+    // Clear background
+    ctx.fillStyle = '#001122';
+    ctx.fillCanvas();
+    
+    // Draw some game objects
+    // Bright sun/light source for bloom
+    ctx.fillStyle = '#ffff88';
+    ctx.fillCircle(600, 100, 40);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillCircle(600, 100, 25);
+    
+    // Player character
+    ctx.fillStyle = '#ff4444';
+    ctx.fillRect(350, 250, 100, 100);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillCircle(375, 275, 8); // Eye
+    ctx.fillCircle(425, 275, 8); // Eye
+    
+    // Environment elements
+    ctx.fillStyle = '#228844';
+    for (let i = 0; i < 5; i++) {
+        const x = i * 150 + 50;
+        ctx.fillRect(x, 300, 20, 150); // Tree trunk
+        ctx.fillCircle(x + 10, 280, 30); // Tree top
+    }
+    
+    // Foreground elements
+    ctx.fillStyle = '#666666';
+    ctx.fillRect(0, 450, 800, 150); // Ground
+    
+    // UI elements (bright for bloom effect)
+    ctx.fillStyle = '#00ffff';
+    ctx.fillRect(50, 50, 200, 30);
+    ctx.fillStyle = '#000000';
+    ctx.font = '20px Arial';
+    ctx.fillText('HEALTH: 100%', 60, 72);
+}
+
+// Post-processing effect examples
+function demonstratePostEffects() {
+    let currentDemo = 0;
+    const demos = [
+        {
+            name: 'No Effects',
+            setup: () => ctx.clearPostEffects()
+        },
+        {
+            name: 'Gaussian Blur',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addBlur(4.0); // radius
+            }
+        },
+        {
+            name: 'Bloom Effect',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addBloom(0.7, 1.2); // threshold, strength
+            }
+        },
+        {
+            name: 'Chromatic Aberration',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addChromaticAberration(0.008); // strength
+            }
+        },
+        {
+            name: 'Vignette',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addVignette(0.8, 0.7); // strength, radius
+            }
+        },
+        {
+            name: 'Color Grading - Warm',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addColorGrading({
+                    brightness: 0.1,
+                    contrast: 1.2,
+                    saturation: 1.3,
+                    hue: 0.0
+                });
+            }
+        },
+        {
+            name: 'Color Grading - Cool',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addColorGrading({
+                    brightness: -0.1,
+                    contrast: 1.1,
+                    saturation: 0.8,
+                    hue: 0.0
+                });
+            }
+        },
+        {
+            name: 'FXAA Anti-aliasing',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addFXAA();
+            }
+        },
+        {
+            name: 'Pixelate Effect',
+            setup: () => {
+                ctx.clearPostEffects();
+                ctx.addPixelate(8.0); // pixel size
+            }
+        },
+        {
+            name: 'Combined Effects',
+            setup: () => {
+                ctx.clearPostEffects();
+                // Chain multiple effects
+                ctx.addBloom(0.6, 0.8);        // Subtle bloom
+                ctx.addVignette(0.4, 0.9);     // Light vignette
+                ctx.addColorGrading({          // Cinematic grading
+                    brightness: 0.05,
+                    contrast: 1.15,
+                    saturation: 1.1,
+                    hue: 0.0
+                });
+                ctx.addFXAA();                 // Final anti-aliasing
+            }
+        }
+    ];
+    
+    // Set up first demo
+    demos[currentDemo].setup();
+    
+    // Cycle through demos every 3 seconds
+    setInterval(() => {
+        currentDemo = (currentDemo + 1) % demos.length;
+        demos[currentDemo].setup();
+        console.log(`Now showing: ${demos[currentDemo].name}`);
+    }, 3000);
+    
+    // Animation loop
+    function animate() {
+        drawGameScene();
+        
+        // Display current effect name
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(250, 500, 300, 50);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(demos[currentDemo].name, 400, 530);
+        ctx.textAlign = 'left'; // Reset alignment
+        
+        ctx.flush(); // Apply all effects and render
+        
+        requestAnimationFrame(animate);
+    }
+    
+    animate();
+    
+    // Manual controls
+    document.addEventListener('keydown', (e) => {
+        if (e.key === ' ') {
+            currentDemo = (currentDemo + 1) % demos.length;
+            demos[currentDemo].setup();
+            console.log(`Switched to: ${demos[currentDemo].name}`);
+        }
+    });
+    
+    console.log('Post-processing demo started! Press SPACE to cycle effects manually.');
+}
+
+// Interactive effect controls
+function createEffectControls() {
+    const controlsDiv = document.createElement('div');
+    controlsDiv.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 20px;
+        border-radius: 8px;
+        font-family: Arial, sans-serif;
+        max-width: 250px;
+    `;
+    
+    controlsDiv.innerHTML = `
+        <h3>Post-Processing Controls</h3>
+        <div>
+            <label>Blur Radius: <span id="blurValue">2.0</span></label><br>
+            <input type="range" id="blurSlider" min="0" max="10" step="0.1" value="2.0">
+        </div>
+        <div>
+            <label>Bloom Threshold: <span id="bloomThresholdValue">0.7</span></label><br>
+            <input type="range" id="bloomThresholdSlider" min="0" max="1" step="0.01" value="0.7">
+        </div>
+        <div>
+            <label>Bloom Strength: <span id="bloomStrengthValue">1.0</span></label><br>
+            <input type="range" id="bloomStrengthSlider" min="0" max="3" step="0.1" value="1.0">
+        </div>
+        <div>
+            <label>Vignette Strength: <span id="vignetteValue">0.5</span></label><br>
+            <input type="range" id="vignetteSlider" min="0" max="1" step="0.01" value="0.5">
+        </div>
+        <div>
+            <label>Aberration: <span id="aberrationValue">0.005</span></label><br>
+            <input type="range" id="aberrationSlider" min="0" max="0.02" step="0.001" value="0.005">
+        </div>
+        <div>
+            <label>Brightness: <span id="brightnessValue">0.0</span></label><br>
+            <input type="range" id="brightnessSlider" min="-0.5" max="0.5" step="0.01" value="0.0">
+        </div>
+        <div>
+            <label>Contrast: <span id="contrastValue">1.0</span></label><br>
+            <input type="range" id="contrastSlider" min="0.5" max="2.0" step="0.01" value="1.0">
+        </div>
+        <div>
+            <label>Saturation: <span id="saturationValue">1.0</span></label><br>
+            <input type="range" id="saturationSlider" min="0" max="2" step="0.01" value="1.0">
+        </div>
+        <br>
+        <button id="resetEffects">Reset All Effects</button>
+        <button id="presetFilm">Film Look</button>
+        <button id="presetDream">Dream Sequence</button>
+        <button id="presetGlitch">Glitch Effect</button>
+    `;
+    
+    document.body.appendChild(controlsDiv);
+    
+    // Control event handlers
+    function updateEffects() {
+        ctx.clearPostEffects();
+        
+        const blur = parseFloat(document.getElementById('blurSlider').value);
+        const bloomThreshold = parseFloat(document.getElementById('bloomThresholdSlider').value);
+        const bloomStrength = parseFloat(document.getElementById('bloomStrengthSlider').value);
+        const vignette = parseFloat(document.getElementById('vignetteSlider').value);
+        const aberration = parseFloat(document.getElementById('aberrationSlider').value);
+        const brightness = parseFloat(document.getElementById('brightnessSlider').value);
+        const contrast = parseFloat(document.getElementById('contrastSlider').value);
+        const saturation = parseFloat(document.getElementById('saturationSlider').value);
+        
+        // Add effects in optimal order
+        if (blur > 0) ctx.addBlur(blur);
+        if (bloomStrength > 0 && bloomThreshold < 1) ctx.addBloom(bloomThreshold, bloomStrength);
+        if (aberration > 0) ctx.addChromaticAberration(aberration);
+        if (vignette > 0) ctx.addVignette(vignette, 0.8);
+        if (brightness !== 0 || contrast !== 1 || saturation !== 1) {
+            ctx.addColorGrading({
+                brightness,
+                contrast,
+                saturation,
+                hue: 0
+            });
+        }
+        ctx.addFXAA(); // Always add FXAA for smooth final result
+    }
+    
+    // Update value displays and effects
+    ['blur', 'bloomThreshold', 'bloomStrength', 'vignette', 'aberration', 'brightness', 'contrast', 'saturation'].forEach(name => {
+        const slider = document.getElementById(name + 'Slider');
+        const display = document.getElementById(name + 'Value');
+        
+        slider.addEventListener('input', () => {
+            display.textContent = slider.value;
+            updateEffects();
+        });
+    });
+    
+    // Preset buttons
+    document.getElementById('resetEffects').addEventListener('click', () => {
+        ctx.clearPostEffects();
+        // Reset all sliders
+        document.getElementById('blurSlider').value = 0;
+        document.getElementById('bloomThresholdSlider').value = 1;
+        document.getElementById('bloomStrengthSlider').value = 0;
+        document.getElementById('vignetteSlider').value = 0;
+        document.getElementById('aberrationSlider').value = 0;
+        document.getElementById('brightnessSlider').value = 0;
+        document.getElementById('contrastSlider').value = 1;
+        document.getElementById('saturationSlider').value = 1;
+        updateEffects();
+    });
+    
+    document.getElementById('presetFilm').addEventListener('click', () => {
+        ctx.clearPostEffects();
+        ctx.addBloom(0.8, 0.4);
+        ctx.addVignette(0.3, 0.9);
+        ctx.addColorGrading({
+            brightness: 0.02,
+            contrast: 1.1,
+            saturation: 0.9,
+            hue: 0
+        });
+        ctx.addFXAA();
+    });
+    
+    document.getElementById('presetDream').addEventListener('click', () => {
+        ctx.clearPostEffects();
+        ctx.addBlur(1.5);
+        ctx.addBloom(0.5, 1.2);
+        ctx.addVignette(0.2, 0.95);
+        ctx.addColorGrading({
+            brightness: 0.08,
+            contrast: 0.9,
+            saturation: 1.2,
+            hue: 0
+        });
+    });
+    
+    document.getElementById('presetGlitch').addEventListener('click', () => {
+        ctx.clearPostEffects();
+        ctx.addChromaticAberration(0.012);
+        ctx.addPixelate(3);
+        ctx.addColorGrading({
+            brightness: 0.05,
+            contrast: 1.3,
+            saturation: 1.4,
+            hue: 0
+        });
+    });
+}
+
+// Start the post-processing demonstration
+demonstratePostEffects();
+createEffectControls();
+```
+
+### Advanced Post-Processing Techniques
+
+```javascript
+// Dynamic post-processing based on game state
+function createDynamicPostProcessing(ctx) {
+    let playerHealth = 100;
+    let isUnderwater = false;
+    let timeOfDay = 0.5; // 0 = midnight, 0.5 = noon, 1 = midnight
+    
+    function updatePostProcessing() {
+        ctx.clearPostEffects();
+        
+        // Health-based effects
+        if (playerHealth < 30) {
+            // Low health: red tint, vignette, blur
+            ctx.addVignette(0.8, 0.6);
+            ctx.addColorGrading({
+                brightness: -0.1,
+                contrast: 1.2,
+                saturation: 0.7,
+                hue: 0
+            });
+            ctx.addBlur(1.0);
+        } else if (playerHealth < 60) {
+            // Medium health: slight vignette
+            ctx.addVignette(0.3, 0.8);
+        }
+        
+        // Environmental effects
+        if (isUnderwater) {
+            ctx.addBlur(0.8);
+            ctx.addColorGrading({
+                brightness: -0.2,
+                contrast: 0.9,
+                saturation: 0.6,
+                hue: 0
+            });
+            ctx.addVignette(0.4, 0.85);
+        }
+        
+        // Time of day effects
+        if (timeOfDay < 0.2 || timeOfDay > 0.8) {
+            // Night time: blue tint, high contrast
+            ctx.addColorGrading({
+                brightness: -0.3,
+                contrast: 1.4,
+                saturation: 0.8,
+                hue: 0
+            });
+            ctx.addVignette(0.6, 0.7);
+        } else if (timeOfDay > 0.4 && timeOfDay < 0.6) {
+            // High noon: bright, high saturation
+            ctx.addBloom(0.7, 0.8);
+            ctx.addColorGrading({
+                brightness: 0.1,
+                contrast: 1.1,
+                saturation: 1.2,
+                hue: 0
+            });
+        }
+        
+        // Always add anti-aliasing
+        ctx.addFXAA();
+    }
+    
+    // Simulate game events
+    setInterval(() => {
+        // Randomly change health
+        if (Math.random() < 0.1) {
+            playerHealth = Math.max(0, Math.min(100, playerHealth + (Math.random() - 0.5) * 20));
+        }
+        
+        // Toggle underwater occasionally
+        if (Math.random() < 0.05) {
+            isUnderwater = !isUnderwater;
+        }
+        
+        // Advance time
+        timeOfDay = (timeOfDay + 0.01) % 1;
+        
+        updatePostProcessing();
+    }, 100);
+    
+    return { updatePostProcessing };
+}
+
+// createDynamicPostProcessing(ctx);
 ```
 
 ## 🎯 Complete API Reference
@@ -982,6 +1140,8 @@ heatmapAnimation();
 - `quadraticCurveTo(cpx, cpy, x, y)` - Quadratic Bézier curve
 - `bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y)` - Cubic Bézier curve
 - `rect(x, y, width, height)` - Add rectangle to path
+- `roundRect(x, y, width, height, radii)` - Add rounded rectangle to path
+- `ellipse(x, y, radiusX, radiusY, rotation?, startAngle?, endAngle?, counterclockwise?)` - Add ellipse to path
 - `closePath()` - Close current path
 - `fill()` - Fill current path
 - `stroke()` - Stroke current path
@@ -997,11 +1157,29 @@ heatmapAnimation();
 - `measureText(text)` - Get text metrics
 
 **Image Data:**
-- `putImageData(imageData, dx, dy)` - Put pixel data onto the canvas
-- `getImageData(sx, sy, sw, sh)` - Get pixel data from the WebGL framebuffer as ImageData (now fully implemented with pixel reading)
+- `putImageData(imageData, dx, dy, dirtyX?, dirtyY?, dirtyWidth?, dirtyHeight?)` - Put pixel data onto canvas
+- `getImageData(sx, sy, sw, sh)` - Get pixel data from WebGL framebuffer as ImageData
 - `createImageData(width, height)` - Create blank ImageData
-- `toDataURL(type?, quality?)` - Export the entire canvas as a data URL string (e.g., for saving images)
-- `toBlob(type?, quality?)` - Export the entire canvas as a Blob (async, for downloads/uploads)
+- `toDataURL(type?, quality?)` - Export canvas as data URL string
+- `toBlob(type?, quality?)` - Export canvas as Blob (async)
+
+**Canvas Utilities:**
+- `clear()` - Clear canvas and reset batches
+- `clearRect(x, y, width, height)` - Clear rectangular area
+- `fillCanvas()` - Fill entire canvas with current fillStyle
+
+### Post-Processing Methods
+- `addBlur(radius)` - Add Gaussian blur effect
+- `addBloom(threshold, strength)` - Add HDR bloom/glow effect  
+- `addChromaticAberration(strength)` - Add RGB color separation
+- `addVignette(strength, radius)` - Add darkened edge effect
+- `addColorGrading(params)` - Add color correction (brightness, contrast, saturation, hue)
+- `addFXAA()` - Add fast approximate anti-aliasing
+- `addPixelate(pixelSize)` - Add retro pixelation effect
+- `clearPostEffects()` - Remove all post-processing effects
+- `enablePostProcessing(enabled)` - Toggle post-processing system
+- `listPostEffects()` - Get array of current effects
+
 
 ### Style Properties
 
@@ -1043,6 +1221,10 @@ heatmapAnimation();
 - `setTransform(a, b, c, d, e, f)` - Set transformation matrix
 - `resetTransform()` - Reset to identity matrix
 
+### Path Hit Testing
+- `isPointInPath(x, y, fillRule?)` - Test if point is inside current path
+- `isPointInStroke(x, y)` - Test if point is on path stroke
+
 ### Gradients & Patterns
 - `createLinearGradient(x0, y0, x1, y1)` - Create linear gradient
 - `createRadialGradient(x0, y0, r0, x1, y1, r1)` - Create radial gradient
@@ -1050,16 +1232,21 @@ heatmapAnimation();
 - `addColorStop(gradient, offset, color)` - Add color stop to gradient
 
 ### Performance Methods
-- `flush()` - Force render all batched objects
+- `flush()` - Force render all batched objects (**REQUIRED** after drawing)
 - `beginBatch()` - Begin batch mode (semantic only)
 - `endBatch()` - End batch and flush
-- `setBatchSize(size)` - Set maximum batch size
-- `clear()` - Clear canvas and reset batches
+- `setBatchSize(size)` - Set maximum batch size (max 5,000 for stability)
 
 ### Advanced Features
-- `addShader(name, vertexSource, fragmentSource)` - Add custom shader
+- `addShader(name, vertexSource, fragmentSource)` - Add custom GLSL shader
 - `useShader(name)` - Use custom shader program
-- `clip()` - Set clipping region (partial implementation)
+- `drawWithShader(name, vertices, indices?, uniforms?, attributes?)` - Draw with custom shader
+- `createQuad(x, y, width, height)` - Helper to create quad vertices/indices
+- `listShaders()` - Get all available shader names
+- `getShaderInfo(name)` - Get shader debugging information
+
+### Clipping (Partial Implementation)
+- `clip()` - Set clipping region from current path
 - `resetClip()` - Clear clipping region
 
 ### Fullscreen & Display
@@ -1067,53 +1254,106 @@ heatmapAnimation();
 - `enterFullscreen()` - Enter fullscreen
 - `exitFullscreen()` - Exit fullscreen
 - `resize(width, height)` - Resize canvas
-- `cleanup()` - Clean up resources
+
+### Resource Management
+- `dispose()` - Clean up all WebGL resources and event listeners
+- `cleanup()` - Legacy cleanup method (use `dispose()` instead)
+
+### Context Management
+- `isContextLost()` - Check if WebGL context is lost
+- `onContextRestore(callback)` - Add callback for context restore
 
 ### Events
 - `'enterFullscreen'` - Fired when entering fullscreen
 - `'exitFullscreen'` - Fired when exiting fullscreen
+- `'contextlost'` - Fired when WebGL context is lost
+- `'contextrestored'` - Fired when WebGL context is restored
 
-## 📋 Features awaiting implementation (WIP)
+## 📋 Important Usage Notes
 
-### High Priority
-- **Path Clipping** - Full stencil buffer-based clipping regions
-- **Pattern Rendering** - Complete pattern fill/stroke support with repetition
-- **Line Dash Rendering** - Visual dash patterns for stroked paths
-- **Advanced Text Features** - Text along path, multi-line text, rich formatting
-- **Image Data Operations** - Full getImageData() with framebuffer reading
-- **Stroke Width for Paths** - Variable width strokes along complex paths
+### Critical: Always Call flush()
+Unlike regular Canvas 2D, WebGL Canvas uses batching for performance. **You must call `ctx.flush()` after all your drawing operations** to actually render them:
 
-### Medium Priority
-- **Advanced Blend Modes** - Complete composite operation implementations
-- **Shadow Rendering** - GPU-accelerated shadow effects
-- **Path Winding Rules** - Non-zero and even-odd fill rules
-- **Anti-aliasing Control** - Fine-tuned AA for different rendering modes
-- **Texture Atlas System** - Automatic sprite batching for better image performance
-- **Gradient Mesh Support** - Complex multi-point gradients
+```javascript
+// Draw things
+ctx.fillRect(10, 10, 100, 100);
+ctx.fillCircle(50, 50, 25);
 
-### Advanced Features
-- **3D Transform Support** - CSS-style 3D transforms for 2D objects
-- **Filter Effects** - Blur, brightness, contrast, drop-shadow filters
-- **Layer System** - Compositing layers with different blend modes
-- **Vector Path Optimization** - Automated path simplification and curve fitting
-- **WebGL 2.0 Features** - Transform feedback, texture arrays, advanced shaders
-- **Debug Visualizer** - Real-time batch visualization and performance metrics
+// REQUIRED: Flush to actually render
+if (ctx.flush) ctx.flush();
+```
 
-### Experimental
-- **Physics Integration** - Built-in 2D physics for game objects
-- **Audio Visualization** - Web Audio API integration for music visualizers
-- **WebXR Support** - VR/AR rendering capabilities
-- **Multi-threading** - OffscreenCanvas and Worker support
-- **Streaming Textures** - Video and camera input as textures
+### Context Loss Handling
+WebGL contexts can be lost due to GPU driver issues, browser tabs, or memory pressure. WebGL Canvas automatically handles context loss/restore:
+
+```javascript
+const ctx = new WebGLCanvas(canvas);
+
+// Optional: Add custom restore logic
+ctx.onContextRestore(() => {
+    console.log('Context restored, reinitialize resources if needed');
+});
+
+// Always check if operations should continue
+function animate() {
+    if (ctx.isContextLost()) {
+        requestAnimationFrame(animate);
+        return;
+    }
+    
+    // Safe to draw
+    ctx.fillRect(10, 10, 100, 100);
+    ctx.flush();
+    
+    requestAnimationFrame(animate);
+}
+```
+
+### Memory Management
+Always dispose of the canvas when done to prevent memory leaks:
+
+```javascript
+const ctx = new WebGLCanvas(canvas);
+
+// When finished (e.g., component unmounting, page unload)
+ctx.dispose();
+```
+
+### Batch Size Limits
+For stability, batch sizes are limited to 5,000 objects. Larger batches risk context loss:
+
+```javascript
+// Good: Stay within limits
+ctx.setBatchSize(2000);
+
+// Potentially problematic: May cause context loss
+ctx.setBatchSize(10000); // Will be clamped to 5000
+```
 
 ## 🚀 Performance Characteristics
 
-- **Rectangle Batching**: 10,000+ rectangles @ 60fps
-- **Circle Rendering**: 5,000+ circles @ 60fps  
-- **Line Drawing**: 20,000+ line segments @ 60fps
+- **Rectangle Batching**: 5,000+ rectangles @ 60fps
+- **Circle Rendering**: 3,000+ circles @ 60fps  
+- **Line Drawing**: 10,000+ line segments @ 60fps
 - **Image Rendering**: 1,000+ images @ 60fps (with texture caching)
 - **Text Rendering**: 500+ text objects @ 60fps
-- **Memory Usage**: ~5MB for standard batching buffers
-- **Startup Time**: <50ms initialization on modern hardware
+- **Memory Usage**: ~3-5MB for standard batching buffers
+- **Context Loss Recovery**: <100ms on modern hardware
+- **Startup Time**: <50ms initialization
+
+## 🔧 Browser Support
+
+- **Chrome/Edge**: Full support with excellent performance
+- **Firefox**: Full support with good performance
+- **Safari**: Full support (may require WebGL enable in settings)
+- **Mobile browsers**: Generally supported on modern devices
+
+## 🐛 Known Limitations
+
+- **Pattern Support**: createPattern() objects created but rendering not fully implemented
+- **Line Dash Rendering**: setLineDash() stores patterns but visual rendering pending
+- **Advanced Clipping**: clip() partially implemented, complex paths may not clip correctly
+- **Variable Line Width**: Path strokes use single line width, complex stroke widths not supported
+- **Some Composite Operations**: Not all globalCompositeOperation modes implemented
 
 Perfect for demanding applications like real-time games, data visualizations, and interactive art installations! 🎨✨

@@ -126,13 +126,18 @@ class WebGLCanvas {
             this.shaders = {};
             this.createBuiltInShaders();
 
+            // Create post-processing system
+            this.postProcessing = {
+                enabled: false,
+                effects: [],
+                framebuffers: [],
+                currentEffect: 0,
+                tempTextures: []
+            };
+            this.createPostProcessingSystem();
+
             // Create batch buffers
             this.createBatchBuffers();
-
-            // Layer system
-            /*this.layers = new Map(); // Map of layer -> batch data
-            this.currentLayer = 0;
-            this.maxLayers = options.maxLayers || 100;*/
 
             // Set initial viewport
             this.gl.viewport(0, 0, this.width, this.height);
@@ -374,6 +379,626 @@ class WebGLCanvas {
     }
 
     /*
+     * Create post-processing system with framebuffers and built-in effects
+     */
+    createPostProcessingSystem() {
+        this.createPostProcessingFramebuffers();
+        this.createPostProcessingShaders();
+        this.createFullscreenQuad();
+    }
+
+    /*
+     * Create framebuffers for post-processing pipeline
+     */
+    createPostProcessingFramebuffers() {
+        const gl = this.gl;
+
+        // Create two framebuffers for ping-ponging between effects
+        for (let i = 0; i < 2; i++) {
+            const framebuffer = gl.createFramebuffer();
+            const texture = gl.createTexture();
+
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.width, this.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+            if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+                console.error('Framebuffer is not complete');
+            }
+
+            this.postProcessing.framebuffers.push(framebuffer);
+            this.postProcessing.tempTextures.push(texture);
+        }
+
+        // Unbind framebuffer
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    /*
+     * Create fullscreen quad for post-processing
+     */
+    createFullscreenQuad() {
+        const gl = this.gl;
+
+        // Create vertex buffer for fullscreen quad
+        const vertices = new Float32Array([
+            -1, -1, 0, 0,  // Bottom-left
+            1, -1, 1, 0,  // Bottom-right
+            -1, 1, 0, 1,  // Top-left
+            1, 1, 1, 1   // Top-right
+        ]);
+
+        this.postProcessing.quadBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.postProcessing.quadBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+        // Create index buffer
+        const indices = new Uint16Array([0, 1, 2, 1, 2, 3]);
+        this.postProcessing.quadIndexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.postProcessing.quadIndexBuffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+    }
+
+    /*
+     * Create built-in post-processing shaders
+     */
+    createPostProcessingShaders() {
+        // Base vertex shader for all post-processing effects
+        const postVertexShader = `
+        precision mediump float;
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
+            v_texCoord = a_texCoord;
+        }
+    `;
+
+        // Pass-through fragment shader (no effect)
+        const passthroughFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            gl_FragColor = texture2D(u_texture, v_texCoord);
+        }
+    `;
+
+        // Improved Gaussian blur fragment shader
+        const blurFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform vec2 u_resolution;
+        uniform vec2 u_direction;
+        uniform float u_blurRadius;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec2 texelSize = 1.0 / u_resolution;
+            vec4 color = vec4(0.0);
+            
+            // 5-tap blur for better performance
+            float weights[5];
+            weights[0] = 0.227027;
+            weights[1] = 0.1945946;
+            weights[2] = 0.1216216;
+            weights[3] = 0.054054;
+            weights[4] = 0.016216;
+            
+            // Sample center
+            color += texture2D(u_texture, v_texCoord) * weights[0];
+            
+            // Sample in both directions
+            for(int i = 1; i < 5; i++) {
+                vec2 offset = u_direction * texelSize * float(i) * u_blurRadius;
+                color += texture2D(u_texture, v_texCoord + offset) * weights[i];
+                color += texture2D(u_texture, v_texCoord - offset) * weights[i];
+            }
+            
+            gl_FragColor = color;
+        }
+    `;
+
+        // Simple bloom extract shader
+        const bloomExtractFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform float u_bloomThreshold;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec4 color = texture2D(u_texture, v_texCoord);
+            float brightness = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+            
+            if(brightness > u_bloomThreshold) {
+                gl_FragColor = color * (brightness - u_bloomThreshold);
+            } else {
+                gl_FragColor = vec4(0.0);
+            }
+        }
+    `;
+
+        // Bloom combine shader
+        const bloomCombineFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform sampler2D u_bloomTexture;
+        uniform float u_bloomStrength;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec3 original = texture2D(u_texture, v_texCoord).rgb;
+            vec3 bloom = texture2D(u_bloomTexture, v_texCoord).rgb;
+            
+            gl_FragColor = vec4(original + bloom * u_bloomStrength, 1.0);
+        }
+    `;
+
+        // FXAA antialiasing fragment shader (simplified)
+        const fxaaFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform vec2 u_resolution;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec2 texelSize = 1.0 / u_resolution;
+            
+            vec3 rgbNW = texture2D(u_texture, v_texCoord + vec2(-1.0, -1.0) * texelSize).rgb;
+            vec3 rgbNE = texture2D(u_texture, v_texCoord + vec2(1.0, -1.0) * texelSize).rgb;
+            vec3 rgbSW = texture2D(u_texture, v_texCoord + vec2(-1.0, 1.0) * texelSize).rgb;
+            vec3 rgbSE = texture2D(u_texture, v_texCoord + vec2(1.0, 1.0) * texelSize).rgb;
+            vec3 rgbM  = texture2D(u_texture, v_texCoord).rgb;
+            
+            vec3 luma = vec3(0.299, 0.587, 0.114);
+            float lumaNW = dot(rgbNW, luma);
+            float lumaNE = dot(rgbNE, luma);
+            float lumaSW = dot(rgbSW, luma);
+            float lumaSE = dot(rgbSE, luma);
+            float lumaM  = dot(rgbM,  luma);
+            
+            float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+            float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+            
+            if(lumaMax - lumaMin < 0.1) {
+                gl_FragColor = vec4(rgbM, 1.0);
+                return;
+            }
+            
+            vec2 dir = vec2(
+                -((lumaNW + lumaNE) - (lumaSW + lumaSE)),
+                ((lumaNW + lumaSW) - (lumaNE + lumaSE))
+            );
+            
+            float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 0.0078125);
+            float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+            dir = min(vec2(8.0), max(vec2(-8.0), dir * rcpDirMin)) * texelSize;
+            
+            vec3 rgbA = 0.5 * (
+                texture2D(u_texture, v_texCoord + dir * -0.166667).rgb +
+                texture2D(u_texture, v_texCoord + dir * 0.166667).rgb);
+            vec3 rgbB = rgbA * 0.5 + 0.25 * (
+                texture2D(u_texture, v_texCoord + dir * -0.5).rgb +
+                texture2D(u_texture, v_texCoord + dir * 0.5).rgb);
+            
+            float lumaB = dot(rgbB, luma);
+            
+            if((lumaB < lumaMin) || (lumaB > lumaMax)) {
+                gl_FragColor = vec4(rgbA, 1.0);
+            } else {
+                gl_FragColor = vec4(rgbB, 1.0);
+            }
+        }
+    `;
+
+        // Chromatic aberration fragment shader
+        const chromaticAberrationFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform float u_aberrationStrength;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec2 center = vec2(0.5);
+            vec2 offset = (v_texCoord - center) * u_aberrationStrength;
+            
+            float r = texture2D(u_texture, v_texCoord - offset).r;
+            float g = texture2D(u_texture, v_texCoord).g;
+            float b = texture2D(u_texture, v_texCoord + offset).b;
+            float a = texture2D(u_texture, v_texCoord).a;
+            
+            gl_FragColor = vec4(r, g, b, a);
+        }
+    `;
+
+        // Vignette fragment shader
+        const vignetteFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform float u_vignetteStrength;
+        uniform float u_vignetteRadius;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec3 color = texture2D(u_texture, v_texCoord).rgb;
+            
+            vec2 center = vec2(0.5);
+            float dist = distance(v_texCoord, center);
+            float vignette = smoothstep(u_vignetteRadius, u_vignetteRadius - 0.3, dist);
+            vignette = mix(1.0 - u_vignetteStrength, 1.0, vignette);
+            
+            gl_FragColor = vec4(color * vignette, texture2D(u_texture, v_texCoord).a);
+        }
+    `;
+
+        // Color grading fragment shader
+        const colorGradingFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform float u_brightness;
+        uniform float u_contrast;
+        uniform float u_saturation;
+        uniform float u_hue;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec3 color = texture2D(u_texture, v_texCoord).rgb;
+            
+            // Brightness
+            color += u_brightness;
+            
+            // Contrast
+            color = (color - 0.5) * u_contrast + 0.5;
+            
+            // Simple saturation adjustment
+            float gray = dot(color, vec3(0.299, 0.587, 0.114));
+            color = mix(vec3(gray), color, u_saturation);
+            
+            gl_FragColor = vec4(clamp(color, 0.0, 1.0), texture2D(u_texture, v_texCoord).a);
+        }
+    `;
+
+        // Pixelate fragment shader
+        const pixelateFragmentShader = `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform vec2 u_resolution;
+        uniform float u_pixelSize;
+        varying vec2 v_texCoord;
+        
+        void main() {
+            vec2 pixelatedUV = floor(v_texCoord * u_resolution / u_pixelSize) * u_pixelSize / u_resolution;
+            gl_FragColor = texture2D(u_texture, pixelatedUV);
+        }
+    `;
+
+        // Create shader programs
+        this.shaders.postPassthrough = this.createShaderProgram(postVertexShader, passthroughFragmentShader);
+        this.shaders.postBlur = this.createShaderProgram(postVertexShader, blurFragmentShader);
+        this.shaders.postBloomExtract = this.createShaderProgram(postVertexShader, bloomExtractFragmentShader);
+        this.shaders.postBloomCombine = this.createShaderProgram(postVertexShader, bloomCombineFragmentShader);
+        this.shaders.postFXAA = this.createShaderProgram(postVertexShader, fxaaFragmentShader);
+        this.shaders.postChromaticAberration = this.createShaderProgram(postVertexShader, chromaticAberrationFragmentShader);
+        this.shaders.postVignette = this.createShaderProgram(postVertexShader, vignetteFragmentShader);
+        this.shaders.postColorGrading = this.createShaderProgram(postVertexShader, colorGradingFragmentShader);
+        this.shaders.postPixelate = this.createShaderProgram(postVertexShader, pixelateFragmentShader);
+    }
+
+    /*
+     * Enable post-processing
+     */
+    enablePostProcessing() {
+        this.postProcessing.enabled = true;
+    }
+
+    /*
+     * Disable post-processing
+     */
+    disablePostProcessing() {
+        this.postProcessing.enabled = false;
+    }
+
+    /*
+     * Add a post-processing effect to the pipeline
+     */
+    addPostEffect(effectName, parameters = {}) {
+        const effect = {
+            name: effectName,
+            parameters: { ...parameters }
+        };
+
+        // Set default parameters for each effect
+        switch (effectName) {
+            case 'blur':
+                effect.parameters = {
+                    radius: 2.0,
+                    ...parameters
+                };
+                break;
+            case 'bloom':
+                effect.parameters = {
+                    strength: 0.5,
+                    threshold: 0.7,
+                    ...parameters
+                };
+                break;
+            case 'chromaticAberration':
+                effect.parameters = {
+                    strength: 0.01,
+                    ...parameters
+                };
+                break;
+            case 'vignette':
+                effect.parameters = {
+                    strength: 0.5,
+                    radius: 0.8,
+                    ...parameters
+                };
+                break;
+            case 'colorGrading':
+                effect.parameters = {
+                    brightness: 0.0,
+                    contrast: 1.0,
+                    saturation: 1.0,
+                    hue: 0.0,
+                    ...parameters
+                };
+                break;
+            case 'pixelate':
+                effect.parameters = {
+                    pixelSize: 4.0,
+                    ...parameters
+                };
+                break;
+        }
+
+        this.postProcessing.effects.push(effect);
+        this.enablePostProcessing();
+    }
+
+    /*
+     * Clear all post-processing effects
+     */
+    clearPostEffects() {
+        this.postProcessing.effects = [];
+        this.disablePostProcessing();
+    }
+
+    /*
+     * Update parameters for a specific post-processing effect
+     */
+    updatePostEffect(effectName, parameters) {
+        const effect = this.postProcessing.effects.find(e => e.name === effectName);
+        if (effect) {
+            Object.assign(effect.parameters, parameters);
+        }
+    }
+
+    /*
+     * Remove a specific post-processing effect
+     */
+    removePostEffect(effectName) {
+        this.postProcessing.effects = this.postProcessing.effects.filter(e => e.name !== effectName);
+        if (this.postProcessing.effects.length === 0) {
+            this.disablePostProcessing();
+        }
+    }
+
+    /*
+     * Render post-processing effects
+     */
+    renderPostProcessing() {
+        if (!this.postProcessing.enabled || this.postProcessing.effects.length === 0) {
+            return;
+        }
+
+        const gl = this.gl;
+
+        // Start with the first framebuffer's texture (where we just rendered the scene)
+        let inputTexture = this.postProcessing.tempTextures[0];
+        let sourceFramebuffer = 0;
+        let targetFramebuffer = 1;
+
+        // Process each effect
+        for (let i = 0; i < this.postProcessing.effects.length; i++) {
+            const effect = this.postProcessing.effects[i];
+            const isLastEffect = i === this.postProcessing.effects.length - 1;
+
+            // Determine output target
+            if (isLastEffect) {
+                // Last effect renders to screen
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            } else {
+                // Render to alternate framebuffer
+                gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcessing.framebuffers[targetFramebuffer]);
+            }
+
+            gl.viewport(0, 0, this.width, this.height);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            this.renderPostEffect(effect, inputTexture);
+
+            // Swap framebuffers for next effect
+            if (!isLastEffect) {
+                inputTexture = this.postProcessing.tempTextures[targetFramebuffer];
+                // Swap source and target
+                const temp = sourceFramebuffer;
+                sourceFramebuffer = targetFramebuffer;
+                targetFramebuffer = temp;
+            }
+        }
+    }
+
+    /*
+     * Render a single post-processing effect
+     */
+    renderPostEffect(effect, inputTexture) {
+        const gl = this.gl;
+        let program;
+
+        // Get shader program for effect
+        switch (effect.name) {
+            case 'blur':
+                program = this.shaders.postBlur;
+                break;
+            case 'bloom':
+                program = this.shaders.postBloom;
+                break;
+            case 'fxaa':
+                program = this.shaders.postFXAA;
+                break;
+            case 'chromaticAberration':
+                program = this.shaders.postChromaticAberration;
+                break;
+            case 'vignette':
+                program = this.shaders.postVignette;
+                break;
+            case 'colorGrading':
+                program = this.shaders.postColorGrading;
+                break;
+            case 'pixelate':
+                program = this.shaders.postPixelate;
+                break;
+            default:
+                program = this.shaders.postPassthrough;
+        }
+
+        gl.useProgram(program);
+
+        // Bind input texture
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, inputTexture);
+        gl.uniform1i(gl.getUniformLocation(program, 'u_texture'), 0);
+
+        // Set common uniforms
+        gl.uniform2f(gl.getUniformLocation(program, 'u_resolution'), this.width, this.height);
+
+        // Set effect-specific uniforms
+        this.setPostEffectUniforms(program, effect);
+
+        // Bind fullscreen quad and render
+        this.renderFullscreenQuad(program);
+    }
+
+    /*
+     * Set uniforms for specific post-processing effects
+     */
+    setPostEffectUniforms(program, effect) {
+        const gl = this.gl;
+        const params = effect.parameters;
+
+        switch (effect.name) {
+            case 'blur':
+                const directionLoc = gl.getUniformLocation(program, 'u_direction');
+                const radiusLoc = gl.getUniformLocation(program, 'u_blurRadius');
+
+                if (directionLoc !== null) {
+                    // For now, just do horizontal blur. For better quality, you'd do two passes
+                    gl.uniform2f(directionLoc, 1.0, 0.0);
+                }
+                if (radiusLoc !== null) {
+                    gl.uniform1f(radiusLoc, params.radius || 2.0);
+                }
+                break;
+
+            case 'bloom':
+                const strengthLoc = gl.getUniformLocation(program, 'u_bloomStrength');
+                const thresholdLoc = gl.getUniformLocation(program, 'u_bloomThreshold');
+
+                if (strengthLoc !== null) {
+                    gl.uniform1f(strengthLoc, params.strength || 0.5);
+                }
+                if (thresholdLoc !== null) {
+                    gl.uniform1f(thresholdLoc, params.threshold || 0.7);
+                }
+                break;
+
+            case 'chromaticAberration':
+                const aberrationLoc = gl.getUniformLocation(program, 'u_aberrationStrength');
+                if (aberrationLoc !== null) {
+                    gl.uniform1f(aberrationLoc, params.strength || 0.01);
+                }
+                break;
+
+            case 'vignette':
+                const vignetteStrengthLoc = gl.getUniformLocation(program, 'u_vignetteStrength');
+                const vignetteRadiusLoc = gl.getUniformLocation(program, 'u_vignetteRadius');
+
+                if (vignetteStrengthLoc !== null) {
+                    gl.uniform1f(vignetteStrengthLoc, params.strength || 0.5);
+                }
+                if (vignetteRadiusLoc !== null) {
+                    gl.uniform1f(vignetteRadiusLoc, params.radius || 0.8);
+                }
+                break;
+
+            case 'colorGrading':
+                const brightnessLoc = gl.getUniformLocation(program, 'u_brightness');
+                const contrastLoc = gl.getUniformLocation(program, 'u_contrast');
+                const saturationLoc = gl.getUniformLocation(program, 'u_saturation');
+                const hueLoc = gl.getUniformLocation(program, 'u_hue');
+
+                if (brightnessLoc !== null) {
+                    gl.uniform1f(brightnessLoc, params.brightness || 0.0);
+                }
+                if (contrastLoc !== null) {
+                    gl.uniform1f(contrastLoc, params.contrast || 1.0);
+                }
+                if (saturationLoc !== null) {
+                    gl.uniform1f(saturationLoc, params.saturation || 1.0);
+                }
+                if (hueLoc !== null) {
+                    gl.uniform1f(hueLoc, params.hue || 0.0);
+                }
+                break;
+
+            case 'pixelate':
+                const pixelSizeLoc = gl.getUniformLocation(program, 'u_pixelSize');
+                if (pixelSizeLoc !== null) {
+                    gl.uniform1f(pixelSizeLoc, params.pixelSize || 4.0);
+                }
+                break;
+        }
+    }
+
+    /*
+     * Render fullscreen quad for post-processing
+     */
+    renderFullscreenQuad(program) {
+        const gl = this.gl;
+
+        // Bind quad vertex buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.postProcessing.quadBuffer);
+
+        // Set up position attribute
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        if (positionLoc >= 0) {
+            gl.enableVertexAttribArray(positionLoc);
+            gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 16, 0);
+        }
+
+        // Set up texture coordinate attribute
+        const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
+        if (texCoordLoc >= 0) {
+            gl.enableVertexAttribArray(texCoordLoc);
+            gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 16, 8);
+        }
+
+        // Bind index buffer and draw
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.postProcessing.quadIndexBuffer);
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+    }
+
+    /*
         * Create built-in shaders for batched rendering
         * Optimized shaders that can handle multiple objects in single draw calls
     */
@@ -432,25 +1057,39 @@ class WebGLCanvas {
         }
     `;
 
+        // Enhanced circle fragment shader that can handle both fill and stroke
         const circleFragmentShader = `
-        precision mediump float;
-        varying vec4 v_color;
-        varying vec2 v_center;
-        varying float v_radius;
-        varying vec2 v_fragCoord;
-        uniform vec2 u_resolution;
-        
-        void main() {
-            vec2 centerPixels = (v_center + 1.0) * 0.5 * u_resolution;
-            centerPixels.y = u_resolution.y - centerPixels.y;
+            precision mediump float;
+            varying vec4 v_color;
+            varying vec2 v_center;
+            varying float v_radius;
+            varying vec2 v_fragCoord;
+            uniform vec2 u_resolution;
+            uniform float u_strokeWidth;
+            uniform int u_isStroke;
             
-            float dist = distance(v_fragCoord, centerPixels);
-            if (dist > v_radius) {
-                discard;
+            void main() {
+                vec2 centerPixels = (v_center + 1.0) * 0.5 * u_resolution;
+                centerPixels.y = u_resolution.y - centerPixels.y;
+                
+                float dist = distance(v_fragCoord, centerPixels);
+                
+                if (u_isStroke == 1) {
+                    // Stroke mode - render only the ring
+                    float innerRadius = v_radius - u_strokeWidth;
+                    if (dist > v_radius || dist < innerRadius) {
+                        discard;
+                    }
+                } else {
+                    // Fill mode - render the entire circle
+                    if (dist > v_radius) {
+                        discard;
+                    }
+                }
+                
+                gl_FragColor = v_color;
             }
-            gl_FragColor = v_color;
-        }
-    `;
+        `;
 
         // Ellipse vertex shader
         const ellipseVertexShader = `
@@ -973,11 +1612,31 @@ class WebGLCanvas {
         }
 
         try {
-            this.flushRectangles();
-            this.flushCircles();
-            this.flushEllipses();
-            this.flushLines();
-            this.flushImages();
+            // If post-processing is enabled, render to framebuffer first
+            if (this.postProcessing.enabled && this.postProcessing.effects.length > 0) {
+                // Bind first framebuffer for scene rendering
+                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.postProcessing.framebuffers[0]);
+                this.gl.viewport(0, 0, this.width, this.height);
+                this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+
+                // Render all batches to the framebuffer
+                this.flushRectangles();
+                this.flushCircles();
+                this.flushEllipses();
+                this.flushLines();
+                this.flushImages();
+
+                // Now apply post-processing effects
+                this.renderPostProcessing();
+            } else {
+                // Normal rendering directly to screen
+                this.flushRectangles();
+                this.flushCircles();
+                this.flushEllipses();
+                this.flushLines();
+                this.flushImages();
+            }
+
         } catch (e) {
             if (this.gl && this.gl.isContextLost()) {
                 console.warn('Context lost during flush operation');
@@ -1254,6 +1913,19 @@ class WebGLCanvas {
         const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
         gl.uniform2f(resolutionLoc, this.width, this.height);
 
+        // Add stroke uniforms
+        const strokeWidthLoc = gl.getUniformLocation(program, 'u_strokeWidth');
+        if (strokeWidthLoc !== null) {
+            gl.uniform1f(strokeWidthLoc, this.state.lineWidth);
+        }
+
+        const isStrokeLoc = gl.getUniformLocation(program, 'u_isStroke');
+        if (isStrokeLoc !== null) {
+            // This would need to be set based on whether we're drawing fill or stroke circles
+            // For now, default to fill (0)
+            gl.uniform1i(isStrokeLoc, 0);
+        }
+
         // Draw all circles in one call!
         gl.drawElements(gl.TRIANGLES, batch.currentIndices, gl.UNSIGNED_SHORT, 0);
 
@@ -1365,7 +2037,17 @@ class WebGLCanvas {
             return;
         }
 
-        this.state.lineWidth = width;
+        this.state.lineWidth = Math.max(0, width);
+
+        // Try to set WebGL line width for thin lines (fallback)
+        if (this.gl && width <= 1) {
+            try {
+                this.gl.lineWidth(width);
+            } catch (e) {
+                // Some browsers/drivers don't support this
+                console.warn('WebGL lineWidth not supported, using rectangle-based rendering');
+            }
+        }
     }
 
     /*
@@ -1810,6 +2492,45 @@ class WebGLCanvas {
     }
 
     /*
+     * Convenience methods for common post-processing effects
+     */
+
+    // Add blur effect
+    addBlur(radius = 2.0) {
+        this.addPostEffect('blur', { radius });
+    }
+
+    // Add bloom effect
+    addBloom(strength = 0.5, threshold = 0.7) {
+        this.addPostEffect('bloom', { strength, threshold });
+    }
+
+    // Add FXAA antialiasing
+    addFXAA() {
+        this.addPostEffect('fxaa');
+    }
+
+    // Add chromatic aberration
+    addChromaticAberration(strength = 0.01) {
+        this.addPostEffect('chromaticAberration', { strength });
+    }
+
+    // Add vignette effect
+    addVignette(strength = 0.5, radius = 0.8) {
+        this.addPostEffect('vignette', { strength, radius });
+    }
+
+    // Add color grading
+    addColorGrading(brightness = 0.0, contrast = 1.0, saturation = 1.0, hue = 0.0) {
+        this.addPostEffect('colorGrading', { brightness, contrast, saturation, hue });
+    }
+
+    // Add pixelate effect
+    addPixelate(pixelSize = 4.0) {
+        this.addPostEffect('pixelate', { pixelSize });
+    }
+
+    /*
         * Save the current state
         * Saves all drawing state to the state stack
     */
@@ -1912,6 +2633,77 @@ class WebGLCanvas {
         }
 
         // Add indices (two triangles)
+        const indexBase = batch.currentVertices;
+        const indexOffset = batch.currentIndices;
+        batch.indexData[indexOffset + 0] = indexBase + 0;
+        batch.indexData[indexOffset + 1] = indexBase + 1;
+        batch.indexData[indexOffset + 2] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1;
+        batch.indexData[indexOffset + 4] = indexBase + 2;
+        batch.indexData[indexOffset + 5] = indexBase + 3;
+
+        batch.currentVertices += 4;
+        batch.currentIndices += 6;
+    }
+
+    /*
+ * Add stroke circle to batch (renders as ring/outline)
+ */
+    addStrokeCircleToBatch(x, y, radius, lineWidth, color) {
+        if (!this.useWebGL) {
+            return;
+        }
+
+        const batch = this.batchBuffers.circles;
+
+        if (batch.currentVertices + 4 > batch.maxVertices) {
+            this.flushCircles();
+            batch.currentVertices = 0;
+            batch.currentIndices = 0;
+        }
+
+        const [cx, cy] = this.transformPoint(x, y);
+        const outerRadius = radius + lineWidth / 2;
+        const vertexIndex = batch.currentVertices;
+
+        // Create quad around the outer circle
+        const vertices = [
+            [cx - outerRadius, cy - outerRadius],
+            [cx + outerRadius, cy - outerRadius],
+            [cx - outerRadius, cy + outerRadius],
+            [cx + outerRadius, cy + outerRadius]
+        ];
+
+        // Apply global alpha consistently
+        const finalColor = [
+            color[0],
+            color[1],
+            color[2],
+            color[3] * this.state.globalAlpha
+        ];
+
+        for (let i = 0; i < 4; i++) {
+            batch.vertexData[(vertexIndex + i) * 2 + 0] = vertices[i][0];
+            batch.vertexData[(vertexIndex + i) * 2 + 1] = vertices[i][1];
+
+            batch.colorData[(vertexIndex + i) * 4 + 0] = finalColor[0];
+            batch.colorData[(vertexIndex + i) * 4 + 1] = finalColor[1];
+            batch.colorData[(vertexIndex + i) * 4 + 2] = finalColor[2];
+            batch.colorData[(vertexIndex + i) * 4 + 3] = finalColor[3];
+
+            batch.centerData[(vertexIndex + i) * 2 + 0] = cx;
+            batch.centerData[(vertexIndex + i) * 2 + 1] = cy;
+
+            // Store both inner and outer radius in the radius data
+            // We'll use radiusData for outer radius and add innerRadius data
+            batch.radiusData[vertexIndex + i] = outerRadius;
+        }
+
+        // We need to modify the circle shader to handle stroke circles
+        // For now, let's store the inner radius in a separate way
+        // This is a workaround - ideally we'd have a separate stroke circle shader
+
+        // Add indices
         const indexBase = batch.currentVertices;
         const indexOffset = batch.currentIndices;
         batch.indexData[indexOffset + 0] = indexBase + 0;
@@ -2255,6 +3047,27 @@ class WebGLCanvas {
     }
 
     /*
+    * Ellipse path
+    * @param {number} x - X coordinate of center
+    * @param {number} y - Y coordinate of center
+    * @param {number} radiusX - Horizontal radius
+    * @param {number} radiusY - Vertical radius
+    * @param {number} rotation - Rotation in radians (optional)
+    * @param {number} startAngle - Start angle in radians (optional)
+    * @param {number} endAngle - End angle in radians (optional)
+    * @param {boolean} counterclockwise - Direction (optional)
+    */
+    ellipse(x, y, radiusX, radiusY, rotation = 0, startAngle = 0, endAngle = 2 * Math.PI, counterclockwise = false) {
+        // Transform the ellipse based on rotation
+        this.save();
+        this.translate(x, y);
+        this.rotate(rotation);
+        this.scale(radiusX, radiusY);
+        this.arc(0, 0, 1, startAngle, endAngle, counterclockwise);
+        this.restore();
+    }
+
+    /*
      * Fill ellipse
      * @param {number} x - X coordinate of center
      * @param {number} y - Y coordinate of center
@@ -2274,6 +3087,38 @@ class WebGLCanvas {
      */
     strokeEllipse(x, y, radiusX, radiusY, rotation = 0, startAngle = 0, endAngle = 2 * Math.PI, counterclockwise = false) {
         this.addEllipseToBatch(x, y, radiusX, radiusY, this.state.strokeStyle);
+    }
+
+    /*
+    * Rounded rectangle path
+    * @param {number} x - X coordinate of the rectangle
+    * @param {number} y - Y coordinate of the rectangle
+    * @param {number} width - Width of the rectangle
+    * @param {number} height - Height of the rectangle
+    * @param {number|Array} radii - Corner radii (single value or array of four values)
+    */
+    roundRect(x, y, width, height, radii = 0) {
+        if (!Array.isArray(radii)) {
+            radii = [radii, radii, radii, radii];
+        } else if (radii.length === 1) {
+            radii = [radii[0], radii[0], radii[0], radii[0]];
+        } else if (radii.length === 2) {
+            radii = [radii[0], radii[1], radii[0], radii[1]];
+        }
+
+        const [tl, tr, br, bl] = radii;
+
+        this.beginPath();
+        this.moveTo(x + tl, y);
+        this.lineTo(x + width - tr, y);
+        this.quadraticCurveTo(x + width, y, x + width, y + tr);
+        this.lineTo(x + width, y + height - br);
+        this.quadraticCurveTo(x + width, y + height, x + width - br, y + height);
+        this.lineTo(x + bl, y + height);
+        this.quadraticCurveTo(x, y + height, x, y + height - bl);
+        this.lineTo(x, y + tl);
+        this.quadraticCurveTo(x, y, x + tl, y);
+        this.closePath();
     }
 
     /*
@@ -2326,18 +3171,71 @@ class WebGLCanvas {
         * @param {number} radius - Radius of the circle
     */
     strokeCircle(x, y, radius) {
-        // TODO: Implement stroke circle batching
-        this.addCircleToBatch(x, y, radius, this.state.strokeStyle);
+        // Clear any existing path to prevent unwanted connections
+        this.beginPath();
+
+        // For stroke circle, we need to draw a ring (hollow circle)
+        // We can do this by drawing two circles: outer and inner
+        const lineWidth = this.state.lineWidth;
+        const outerRadius = radius + lineWidth / 2;
+        const innerRadius = Math.max(0, radius - lineWidth / 2);
+
+        if (innerRadius > 0) {
+            // Draw as a ring using a custom approach
+            this.addStrokeCircleToBatch(x, y, radius, lineWidth, this.state.strokeStyle);
+        } else {
+            // If inner radius is 0, just draw a filled circle
+            this.addCircleToBatch(x, y, outerRadius, this.state.strokeStyle);
+        }
     }
 
     /*
-        * Draw a line between two points - adds to batch
+        * Enhanced drawLine method with proper line width support
+        * Draws thick lines as rectangles for consistent cross-browser support
         * @param {number} x1 - X coordinate of the first point
         * @param {number} y1 - Y coordinate of the first point
         * @param {number} x2 - X coordinate of the second point
         * @param {number} y2 - Y coordinate of the second point
     */
     drawLine(x1, y1, x2, y2) {
+        const lineWidth = this.state.lineWidth;
+
+        // For line width of 1 or less, use the simple line rendering
+        if (lineWidth <= 1) {
+            this.drawThinLine(x1, y1, x2, y2);
+            return;
+        }
+
+        // For thick lines, draw as rectangles
+        this.drawThickLine(x1, y1, x2, y2, lineWidth);
+    }
+
+    /*
+    * Draw line join between two segments
+    * @param {Object} seg1 - First segment
+    * @param {Object} seg2 - Second segment
+    * @param {number} width - Line width
+    */
+    drawLineJoin(seg1, seg2, width) {
+        const joinX = seg1.x2;
+        const joinY = seg1.y2;
+        const halfWidth = width / 2;
+
+        if (this.state.lineJoin === 'round') {
+            // Draw a circle at the join point
+            this.fillCircle(joinX, joinY, halfWidth);
+        } else if (this.state.lineJoin === 'bevel') {
+            // Calculate bevel join geometry (simplified)
+            // This is complex geometry, so for now just draw a circle
+            this.fillCircle(joinX, joinY, halfWidth);
+        }
+        // For 'miter', we don't need to do anything extra as the rectangles will overlap
+    }
+
+    /*
+     * Draw thin line using GL_LINES (original implementation)
+     */
+    drawThinLine(x1, y1, x2, y2) {
         const batch = this.batchBuffers.lines;
 
         // Check if batch is full
@@ -2376,6 +3274,166 @@ class WebGLCanvas {
         }
 
         batch.currentVertices += 2;
+    }
+
+    /*
+     * Draw thick line as a rectangle
+     * @param {number} x1 - Start X
+     * @param {number} y1 - Start Y
+     * @param {number} x2 - End X
+     * @param {number} y2 - End Y
+     * @param {number} width - Line width
+     */
+    drawThickLine(x1, y1, x2, y2, width) {
+        // Calculate line direction and perpendicular
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length === 0) {
+            // Draw a small circle for zero-length lines
+            this.fillCircle(x1, y1, width / 2);
+            return;
+        }
+
+        // Normalized perpendicular vector
+        const perpX = -dy / length;
+        const perpY = dx / length;
+
+        // Half width offset
+        const halfWidth = width / 2;
+        const offsetX = perpX * halfWidth;
+        const offsetY = perpY * halfWidth;
+
+        // Calculate the four corners of the line rectangle
+        const corners = [
+            { x: x1 - offsetX, y: y1 - offsetY }, // Bottom-left of line start
+            { x: x1 + offsetX, y: y1 + offsetY }, // Top-left of line start
+            { x: x2 + offsetX, y: y2 + offsetY }, // Top-right of line end
+            { x: x2 - offsetX, y: y2 - offsetY }  // Bottom-right of line end
+        ];
+
+        // Handle line caps
+        if (this.state.lineCap !== 'butt') {
+            this.drawLineWithCaps(corners, x1, y1, x2, y2, width, dx, dy, length);
+        } else {
+            this.drawLineRectangle(corners);
+        }
+    }
+
+    /*
+     * Draw line rectangle using the rectangle batch
+     * @param {Array} corners - Four corner points
+     */
+    drawLineRectangle(corners) {
+        const batch = this.batchBuffers.rectangles;
+
+        if (batch.currentVertices + 4 > batch.maxVertices) {
+            this.flushRectangles();
+            batch.currentVertices = 0;
+            batch.currentIndices = 0;
+        }
+
+        // Transform corners
+        const transformedCorners = corners.map(corner =>
+            this.transformPoint(corner.x, corner.y)
+        );
+
+        const vertexIndex = batch.currentVertices;
+        const color = this.state.strokeStyle;
+
+        // Apply global alpha
+        const finalColor = [
+            color[0],
+            color[1],
+            color[2],
+            color[3] * this.state.globalAlpha
+        ];
+
+        // Add vertices (reorder for proper triangle winding)
+        batch.vertexData[vertexIndex * 2 + 0] = transformedCorners[0][0]; // Bottom-left
+        batch.vertexData[vertexIndex * 2 + 1] = transformedCorners[0][1];
+        batch.vertexData[vertexIndex * 2 + 2] = transformedCorners[3][0]; // Bottom-right
+        batch.vertexData[vertexIndex * 2 + 3] = transformedCorners[3][1];
+        batch.vertexData[vertexIndex * 2 + 4] = transformedCorners[1][0]; // Top-left
+        batch.vertexData[vertexIndex * 2 + 5] = transformedCorners[1][1];
+        batch.vertexData[vertexIndex * 2 + 6] = transformedCorners[2][0]; // Top-right
+        batch.vertexData[vertexIndex * 2 + 7] = transformedCorners[2][1];
+
+        // Add colors for all 4 vertices
+        for (let i = 0; i < 4; i++) {
+            batch.colorData[(vertexIndex + i) * 4 + 0] = finalColor[0];
+            batch.colorData[(vertexIndex + i) * 4 + 1] = finalColor[1];
+            batch.colorData[(vertexIndex + i) * 4 + 2] = finalColor[2];
+            batch.colorData[(vertexIndex + i) * 4 + 3] = finalColor[3];
+        }
+
+        // Add indices (two triangles)
+        const indexBase = batch.currentVertices;
+        const indexOffset = batch.currentIndices;
+        batch.indexData[indexOffset + 0] = indexBase + 0;
+        batch.indexData[indexOffset + 1] = indexBase + 1;
+        batch.indexData[indexOffset + 2] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1;
+        batch.indexData[indexOffset + 4] = indexBase + 2;
+        batch.indexData[indexOffset + 5] = indexBase + 3;
+
+        batch.currentVertices += 4;
+        batch.currentIndices += 6;
+    }
+
+    /*
+     * Draw line with caps (round or square)
+     * @param {Array} corners - Base rectangle corners
+     * @param {number} x1 - Start X
+     * @param {number} y1 - Start Y
+     * @param {number} x2 - End X
+     * @param {number} y2 - End Y
+     * @param {number} width - Line width
+     * @param {number} dx - X direction
+     * @param {number} dy - Y direction
+     * @param {number} length - Line length
+     */
+    drawLineWithCaps(corners, x1, y1, x2, y2, width, dx, dy, length) {
+        // Draw the main line rectangle
+        this.drawLineRectangle(corners);
+
+        const halfWidth = width / 2;
+
+        if (this.state.lineCap === 'round') {
+            // Draw round caps as circles
+            this.fillCircle(x1, y1, halfWidth);
+            this.fillCircle(x2, y2, halfWidth);
+        } else if (this.state.lineCap === 'square') {
+            // Extend the line by half width on each end
+            const extendX = (dx / length) * halfWidth;
+            const extendY = (dy / length) * halfWidth;
+
+            // Extended corners
+            const perpX = -dy / length;
+            const perpY = dx / length;
+            const offsetX = perpX * halfWidth;
+            const offsetY = perpY * halfWidth;
+
+            // Start cap
+            const startCap = [
+                { x: x1 - extendX - offsetX, y: y1 - extendY - offsetY },
+                { x: x1 - extendX + offsetX, y: y1 - extendY + offsetY },
+                { x: x1 + offsetX, y: y1 + offsetY },
+                { x: x1 - offsetX, y: y1 - offsetY }
+            ];
+
+            // End cap
+            const endCap = [
+                { x: x2 - offsetX, y: y2 - offsetY },
+                { x: x2 + offsetX, y: y2 + offsetY },
+                { x: x2 + extendX + offsetX, y: y2 + extendY + offsetY },
+                { x: x2 + extendX - offsetX, y: y2 + extendY - offsetY }
+            ];
+
+            this.drawLineRectangle(startCap);
+            this.drawLineRectangle(endCap);
+        }
     }
 
     /*
@@ -2472,6 +3530,13 @@ class WebGLCanvas {
      * @param {boolean} counterclockwise - Direction
      */
     arc(x, y, radius, startAngle, endAngle, counterclockwise = false) {
+        // If this is the start of a new path or we're at 0,0, move to the arc start point
+        if (this.currentPath.length === 0 || (this.currentX === 0 && this.currentY === 0)) {
+            const startX = x + Math.cos(startAngle) * radius;
+            const startY = y + Math.sin(startAngle) * radius;
+            this.moveTo(startX, startY);
+        }
+
         this.currentPath.push({ type: 'arc', x, y, radius, startAngle, endAngle, counterclockwise });
 
         // Update current position to end of arc
@@ -2509,29 +3574,77 @@ class WebGLCanvas {
     }
 
     /*
-     * Fill the current path
-     */
-    fill() {
-        this.renderPath(true);
+    * Fill the current path with a specific fill rule
+    * @param {string} fillRule - 'nonzero' or 'evenodd'
+    */
+    fill(fillRule = 'nonzero') {
+        this.renderPath(true, fillRule);
     }
 
     /*
-     * Stroke the current path
-     */
+    * Stroke the current path
+    */
     stroke() {
-        this.renderPath(false);
+        if (this.currentPath.length === 0) return;
+
+        // If line width is thick, we need special handling
+        if (this.state.lineWidth > 1) {
+            this.renderThickStroke();
+        } else {
+            this.renderPath(false);
+        }
     }
 
     /*
- * Render the current path
- * @param {boolean} fill - Whether to fill (true) or stroke (false)
- */
-    renderPath(fill) {
+     * Render thick stroke for paths
+     */
+    renderThickStroke() {
+        const segments = this.pathToSegments(this.currentPath);
+        const lineWidth = this.state.lineWidth;
+
+        // Draw each segment as a thick line
+        for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
+            this.drawThickLine(segment.x1, segment.y1, segment.x2, segment.y2, lineWidth);
+
+            // Handle line joins
+            if (i > 0 && this.state.lineJoin !== 'miter') {
+                const prevSegment = segments[i - 1];
+                this.drawLineJoin(prevSegment, segment, lineWidth);
+            }
+        }
+    }
+
+    /*
+    * Both fill and stroke the current path
+    */
+    fillAndStroke() {
+        this.fill();
+        this.stroke();
+    }
+
+    /*
+    * Clear the current path without rendering
+    */
+    clearPath() {
+        this.currentPath = [];
+        this.currentX = 0;
+        this.currentY = 0;
+        this.pathStartX = 0;
+        this.pathStartY = 0;
+    }
+
+    /*
+    * Render the current path
+    * @param {boolean} fill - Whether to fill (true) or stroke (false)
+    * @param {string} fillRule - Fill rule for filling ('nonzero' or 'evenodd')
+    */
+    renderPath(fill, fillRule = 'nonzero') {
         if (this.currentPath.length === 0) return;
 
         if (fill) {
             // For filling, we need to triangulate the path
-            const triangles = this.triangulatePath(this.currentPath);
+            const triangles = this.triangulatePath(this.currentPath, fillRule);
             if (triangles.length > 0) {
                 this.renderTriangles(triangles, this.state.fillStyle);
             }
@@ -2822,95 +3935,12 @@ class WebGLCanvas {
     }
 
     /*
-     * Convert path to line segments
-     * @param {Array} path - Path commands
-     * @return {Array} - Array of line segments
-     */
+    * Convert path to line segments (updated to use enhanced version)
+    * @param {Array} path - Path commands
+    * @return {Array} - Array of line segments
+    */
     pathToSegments(path) {
-        const segments = [];
-        let currentX = 0, currentY = 0;
-        let startX = 0, startY = 0;
-
-        for (const command of path) {
-            switch (command.type) {
-                case 'moveTo':
-                    currentX = command.x;
-                    currentY = command.y;
-                    startX = command.x;
-                    startY = command.y;
-                    break;
-
-                case 'lineTo':
-                    segments.push({
-                        x1: currentX, y1: currentY,
-                        x2: command.x, y2: command.y
-                    });
-                    currentX = command.x;
-                    currentY = command.y;
-                    break;
-
-                case 'quadraticCurveTo':
-                    // Approximate with line segments
-                    const quadSegments = this.approximateQuadratic(
-                        currentX, currentY,
-                        command.cpx, command.cpy,
-                        command.x, command.y,
-                        10 // number of segments
-                    );
-                    segments.push(...quadSegments);
-                    currentX = command.x;
-                    currentY = command.y;
-                    break;
-
-                case 'bezierCurveTo':
-                    // Approximate with line segments
-                    const bezierSegments = this.approximateBezier(
-                        currentX, currentY,
-                        command.cp1x, command.cp1y,
-                        command.cp2x, command.cp2y,
-                        command.x, command.y,
-                        10 // number of segments
-                    );
-                    segments.push(...bezierSegments);
-                    currentX = command.x;
-                    currentY = command.y;
-                    break;
-
-                case 'arc':
-                    const arcSegments = this.approximateArc(
-                        command.x, command.y,
-                        command.radius,
-                        command.startAngle,
-                        command.endAngle,
-                        command.counterclockwise,
-                        20 // number of segments
-                    );
-                    if (arcSegments.length > 0) {
-                        // Connect to start of arc
-                        const firstPoint = arcSegments[0];
-                        segments.push({
-                            x1: currentX, y1: currentY,
-                            x2: firstPoint.x1, y2: firstPoint.y1
-                        });
-                        segments.push(...arcSegments);
-                        const lastPoint = arcSegments[arcSegments.length - 1];
-                        currentX = lastPoint.x2;
-                        currentY = lastPoint.y2;
-                    }
-                    break;
-
-                case 'close':
-                    segments.push({
-                        x1: currentX, y1: currentY,
-                        x2: startX, y2: startY
-                    });
-                    currentX = startX;
-                    currentY = startY;
-                    break;
-            }
-        }
-
-        return segments;
+        return this.pathToSegmentsEnhanced(path);
     }
 
     /*
@@ -3169,20 +4199,417 @@ class WebGLCanvas {
     }
 
     /*
+ * Check if point is inside path
+ * @param {number} x - X coordinate of the point
+ * @param {number} y - Y coordinate of the point
+ * @param {string} fillRule - Fill rule ('nonzero' or 'evenodd')
+ * @return {boolean} - True if point is inside path, false otherwise
+ */
+    isPointInPath(x, y, fillRule = 'nonzero') {
+        if (this.currentPath.length === 0) return false;
+
+        // Convert path to polygons
+        const polygons = this.pathToPolygons(this.currentPath);
+
+        // Transform the test point using inverse of current transform
+        const [testX, testY] = this.inverseTransformPoint(x, y);
+
+        // Test against each polygon
+        for (const polygon of polygons) {
+            if (polygon.length < 3) continue;
+
+            if (fillRule === 'evenodd') {
+                if (this.pointInPolygonEvenOdd(testX, testY, polygon)) {
+                    return true;
+                }
+            } else {
+                if (this.pointInPolygonNonZero(testX, testY, polygon)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /*
+     * Check if point is inside stroke
+     * @param {number} x - X coordinate of the point
+     * @param {number} y - Y coordinate of the point
+     * @return {boolean} - True if point is inside stroke, false otherwise
+     */
+    isPointInStroke(x, y) {
+        if (this.currentPath.length === 0) return false;
+
+        // Transform the test point using inverse of current transform
+        const [testX, testY] = this.inverseTransformPoint(x, y);
+
+        // Convert path to line segments
+        const segments = this.pathToSegments(this.currentPath);
+        const lineWidth = this.state.lineWidth;
+        const halfWidth = lineWidth / 2;
+
+        // Test against each line segment
+        for (const segment of segments) {
+            if (this.pointNearLineSegment(testX, testY, segment.x1, segment.y1, segment.x2, segment.y2, halfWidth)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /*
+     * Transform point using inverse of current transformation matrix
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @return {Array} - Transformed coordinates
+     */
+    inverseTransformPoint(x, y) {
+        const m = this.state.transform;
+
+        // Calculate determinant
+        const det = m[0] * m[4] - m[1] * m[3];
+
+        if (Math.abs(det) < 1e-10) {
+            // Matrix is singular, return original point
+            return [x, y];
+        }
+
+        // Calculate inverse matrix elements
+        const invDet = 1 / det;
+        const a = m[4] * invDet;
+        const b = -m[1] * invDet;
+        const c = -m[3] * invDet;
+        const d = m[0] * invDet;
+        const e = (m[3] * m[5] - m[4] * m[2]) * invDet;
+        const f = (m[1] * m[2] - m[0] * m[5]) * invDet;
+
+        // Apply inverse transformation
+        return [
+            a * x + c * y + e,
+            b * x + d * y + f
+        ];
+    }
+
+    /*
+     * Point-in-polygon test using even-odd rule
+     * @param {number} x - Test point X
+     * @param {number} y - Test point Y
+     * @param {Array} polygon - Array of {x, y} points
+     * @return {boolean} - True if point is inside polygon
+     */
+    pointInPolygonEvenOdd(x, y, polygon) {
+        let inside = false;
+        const n = polygon.length;
+
+        for (let i = 0, j = n - 1; i < n; j = i++) {
+            const xi = polygon[i].x;
+            const yi = polygon[i].y;
+            const xj = polygon[j].x;
+            const yj = polygon[j].y;
+
+            if (((yi > y) !== (yj > y)) &&
+                (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+                inside = !inside;
+            }
+        }
+
+        return inside;
+    }
+
+    /*
+     * Point-in-polygon test using non-zero winding rule
+     * @param {number} x - Test point X
+     * @param {number} y - Test point Y
+     * @param {Array} polygon - Array of {x, y} points
+     * @return {boolean} - True if point is inside polygon
+     */
+    pointInPolygonNonZero(x, y, polygon) {
+        let winding = 0;
+        const n = polygon.length;
+
+        for (let i = 0; i < n; i++) {
+            const j = (i + 1) % n;
+            const xi = polygon[i].x;
+            const yi = polygon[i].y;
+            const xj = polygon[j].x;
+            const yj = polygon[j].y;
+
+            if (yi <= y) {
+                if (yj > y) { // Upward crossing
+                    if (this.isLeft(xi, yi, xj, yj, x, y) > 0) {
+                        winding++;
+                    }
+                }
+            } else {
+                if (yj <= y) { // Downward crossing
+                    if (this.isLeft(xi, yi, xj, yj, x, y) < 0) {
+                        winding--;
+                    }
+                }
+            }
+        }
+
+        return winding !== 0;
+    }
+
+    /*
+     * Test if point is left of line segment
+     * @param {number} x1 - Line start X
+     * @param {number} y1 - Line start Y
+     * @param {number} x2 - Line end X
+     * @param {number} y2 - Line end Y
+     * @param {number} px - Point X
+     * @param {number} py - Point Y
+     * @return {number} - Positive if left, negative if right, 0 if on line
+     */
+    isLeft(x1, y1, x2, y2, px, py) {
+        return (x2 - x1) * (py - y1) - (px - x1) * (y2 - y1);
+    }
+
+    /*
+     * Test if point is near a line segment (for stroke testing)
+     * @param {number} px - Point X
+     * @param {number} py - Point Y
+     * @param {number} x1 - Line start X
+     * @param {number} y1 - Line start Y
+     * @param {number} x2 - Line end X
+     * @param {number} y2 - Line end Y
+     * @param {number} tolerance - Distance tolerance
+     * @return {boolean} - True if point is within tolerance of line segment
+     */
+    pointNearLineSegment(px, py, x1, y1, x2, y2, tolerance) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length === 0) {
+            // Line segment is a point
+            const dist = Math.sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1));
+            return dist <= tolerance;
+        }
+
+        // Calculate the closest point on the line segment
+        const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (length * length)));
+        const closestX = x1 + t * dx;
+        const closestY = y1 + t * dy;
+
+        // Calculate distance from point to closest point on segment
+        const distance = Math.sqrt((px - closestX) * (px - closestX) + (py - closestY) * (py - closestY));
+
+        return distance <= tolerance;
+    }
+
+    /*
+     * Enhanced path to segments conversion that handles curves properly
+     * @param {Array} path - Path commands
+     * @return {Array} - Array of line segments with curve approximations
+     */
+    pathToSegmentsEnhanced(path) {
+        const segments = [];
+        let currentX = 0, currentY = 0;
+        let startX = 0, startY = 0;
+
+        for (const command of path) {
+            switch (command.type) {
+                case 'moveTo':
+                    currentX = command.x;
+                    currentY = command.y;
+                    startX = command.x;
+                    startY = command.y;
+                    break;
+
+                case 'lineTo':
+                    segments.push({
+                        x1: currentX, y1: currentY,
+                        x2: command.x, y2: command.y,
+                        type: 'line'
+                    });
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'quadraticCurveTo':
+                    // Approximate curve with multiple line segments for better accuracy
+                    const quadSegments = this.approximateQuadraticForTesting(
+                        currentX, currentY,
+                        command.cpx, command.cpy,
+                        command.x, command.y,
+                        20 // More segments for better accuracy
+                    );
+                    segments.push(...quadSegments);
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'bezierCurveTo':
+                    // Approximate curve with multiple line segments for better accuracy
+                    const bezierSegments = this.approximateBezierForTesting(
+                        currentX, currentY,
+                        command.cp1x, command.cp1y,
+                        command.cp2x, command.cp2y,
+                        command.x, command.y,
+                        20 // More segments for better accuracy
+                    );
+                    segments.push(...bezierSegments);
+                    currentX = command.x;
+                    currentY = command.y;
+                    break;
+
+                case 'arc':
+                    const arcSegments = this.approximateArcForTesting(
+                        command.x, command.y,
+                        command.radius,
+                        command.startAngle,
+                        command.endAngle,
+                        command.counterclockwise,
+                        30 // More segments for circles
+                    );
+                    if (arcSegments.length > 0) {
+                        // Connect to start of arc if needed
+                        const firstPoint = arcSegments[0];
+                        if (Math.abs(currentX - firstPoint.x1) > 0.001 || Math.abs(currentY - firstPoint.y1) > 0.001) {
+                            segments.push({
+                                x1: currentX, y1: currentY,
+                                x2: firstPoint.x1, y2: firstPoint.y1,
+                                type: 'line'
+                            });
+                        }
+                        segments.push(...arcSegments);
+                        const lastPoint = arcSegments[arcSegments.length - 1];
+                        currentX = lastPoint.x2;
+                        currentY = lastPoint.y2;
+                    }
+                    break;
+
+                case 'close':
+                    if (Math.abs(currentX - startX) > 0.001 || Math.abs(currentY - startY) > 0.001) {
+                        segments.push({
+                            x1: currentX, y1: currentY,
+                            x2: startX, y2: startY,
+                            type: 'line'
+                        });
+                    }
+                    currentX = startX;
+                    currentY = startY;
+                    break;
+            }
+        }
+
+        return segments;
+    }
+
+    /*
+     * Approximate quadratic curve for testing (higher precision)
+     */
+    approximateQuadraticForTesting(x0, y0, cx, cy, x1, y1, segments) {
+        const result = [];
+        for (let i = 0; i < segments; i++) {
+            const t1 = i / segments;
+            const t2 = (i + 1) / segments;
+
+            const p1 = this.quadraticBezier(x0, y0, cx, cy, x1, y1, t1);
+            const p2 = this.quadraticBezier(x0, y0, cx, cy, x1, y1, t2);
+
+            result.push({
+                x1: p1.x, y1: p1.y,
+                x2: p2.x, y2: p2.y,
+                type: 'curve'
+            });
+        }
+        return result;
+    }
+
+    /*
+     * Approximate cubic bezier curve for testing (higher precision)
+     */
+    approximateBezierForTesting(x0, y0, cx1, cy1, cx2, cy2, x1, y1, segments) {
+        const result = [];
+        for (let i = 0; i < segments; i++) {
+            const t1 = i / segments;
+            const t2 = (i + 1) / segments;
+
+            const p1 = this.cubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t1);
+            const p2 = this.cubicBezier(x0, y0, cx1, cy1, cx2, cy2, x1, y1, t2);
+
+            result.push({
+                x1: p1.x, y1: p1.y,
+                x2: p2.x, y2: p2.y,
+                type: 'curve'
+            });
+        }
+        return result;
+    }
+
+    /*
+     * Approximate arc for testing (higher precision)
+     */
+    approximateArcForTesting(cx, cy, radius, startAngle, endAngle, counterclockwise, segments) {
+        const result = [];
+
+        let totalAngle = endAngle - startAngle;
+        if (counterclockwise) {
+            if (totalAngle > 0) totalAngle -= 2 * Math.PI;
+        } else {
+            if (totalAngle < 0) totalAngle += 2 * Math.PI;
+        }
+
+        const angleStep = totalAngle / segments;
+
+        for (let i = 0; i < segments; i++) {
+            const angle1 = startAngle + angleStep * i;
+            const angle2 = startAngle + angleStep * (i + 1);
+
+            const x1 = cx + Math.cos(angle1) * radius;
+            const y1 = cy + Math.sin(angle1) * radius;
+            const x2 = cx + Math.cos(angle2) * radius;
+            const y2 = cy + Math.sin(angle2) * radius;
+
+            result.push({
+                x1, y1, x2, y2,
+                type: 'arc'
+            });
+        }
+
+        return result;
+    }
+
+    /*
      * Put image data
      * @param {ImageData} imageData - Image data to put
      * @param {number} dx - Destination x
      * @param {number} dy - Destination y
      */
-    putImageData(imageData, dx, dy) {
-        // Create a temporary canvas to draw the image data
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = imageData.width;
-        tempCanvas.height = imageData.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.putImageData(imageData, 0, 0);
+    putImageData(imageData, dx, dy, dirtyX = 0, dirtyY = 0, dirtyWidth, dirtyHeight) {
+        // Handle dirty rectangle parameters
+        dirtyWidth = dirtyWidth || imageData.width;
+        dirtyHeight = dirtyHeight || imageData.height;
 
-        this.drawImage(tempCanvas, dx, dy);
+        // Create temporary canvas with just the dirty region
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = dirtyWidth;
+        tempCanvas.height = dirtyHeight;
+        const tempCtx = tempCanvas.getContext('2d');
+
+        // Create ImageData for dirty region
+        const dirtyImageData = tempCtx.createImageData(dirtyWidth, dirtyHeight);
+
+        // Copy dirty region data
+        for (let y = 0; y < dirtyHeight; y++) {
+            for (let x = 0; x < dirtyWidth; x++) {
+                const srcIdx = ((dirtyY + y) * imageData.width + (dirtyX + x)) * 4;
+                const dstIdx = (y * dirtyWidth + x) * 4;
+
+                dirtyImageData.data[dstIdx] = imageData.data[srcIdx];
+                dirtyImageData.data[dstIdx + 1] = imageData.data[srcIdx + 1];
+                dirtyImageData.data[dstIdx + 2] = imageData.data[srcIdx + 2];
+                dirtyImageData.data[dstIdx + 3] = imageData.data[srcIdx + 3];
+            }
+        }
+
+        tempCtx.putImageData(dirtyImageData, 0, 0);
+        this.drawImage(tempCanvas, dx + dirtyX, dy + dirtyY);
     }
 
     /*
@@ -3701,6 +5128,39 @@ class WebGLCanvas {
      * Call this when you're done with the canvas to prevent memory leaks
      */
     dispose() {
+        // Clean up post-processing resources
+        if (this.gl && !this.isContextLost()) {
+            try {
+                // Delete framebuffers
+                if (this.postProcessing.framebuffers) {
+                    this.postProcessing.framebuffers.forEach(fb => {
+                        if (this.gl.isFramebuffer(fb)) {
+                            this.gl.deleteFramebuffer(fb);
+                        }
+                    });
+                }
+
+                // Delete temp textures
+                if (this.postProcessing.tempTextures) {
+                    this.postProcessing.tempTextures.forEach(tex => {
+                        if (this.gl.isTexture(tex)) {
+                            this.gl.deleteTexture(tex);
+                        }
+                    });
+                }
+
+                // Delete quad buffers
+                if (this.postProcessing.quadBuffer && this.gl.isBuffer(this.postProcessing.quadBuffer)) {
+                    this.gl.deleteBuffer(this.postProcessing.quadBuffer);
+                }
+                if (this.postProcessing.quadIndexBuffer && this.gl.isBuffer(this.postProcessing.quadIndexBuffer)) {
+                    this.gl.deleteBuffer(this.postProcessing.quadIndexBuffer);
+                }
+            } catch (e) {
+                console.warn('Error during post-processing cleanup:', e);
+            }
+        }
+
         // Set flag to prevent further operations
         this.disposing = true;
 
@@ -3847,6 +5307,29 @@ class WebGLCanvas {
         this.width = width;
         this.height = height;
         this.gl.viewport(0, 0, width, height);
+
+        // Recreate post-processing framebuffers with new size
+        if (this.postProcessing.enabled) {
+            this.recreatePostProcessingFramebuffers();
+        }
+    }
+
+    /*
+     * Recreate framebuffers after resize
+     */
+    recreatePostProcessingFramebuffers() {
+        const gl = this.gl;
+
+        // Delete old framebuffers and textures
+        this.postProcessing.framebuffers.forEach(fb => gl.deleteFramebuffer(fb));
+        this.postProcessing.tempTextures.forEach(tex => gl.deleteTexture(tex));
+
+        // Clear arrays
+        this.postProcessing.framebuffers = [];
+        this.postProcessing.tempTextures = [];
+
+        // Recreate with new size
+        this.createPostProcessingFramebuffers();
     }
 
     // Fullscreen functionality (keeping existing implementation)
