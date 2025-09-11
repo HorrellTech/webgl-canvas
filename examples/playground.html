@@ -10,6 +10,16 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
 
+    <!-- Add Marked.js for better markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- Add Prism.js for syntax highlighting -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1/themes/prism-tomorrow.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-javascript.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-glsl.min.js"></script>
+
     <style>
         * {
             margin: 0;
@@ -314,6 +324,301 @@
             padding: 8px;
         }
 
+        /* Documentation Modal Styles */
+        .docs-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 2000;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .docs-modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideIn {
+            from { 
+                transform: translate(-50%, -50%) scale(0.9);
+                opacity: 0;
+            }
+            to { 
+                transform: translate(-50%, -50%) scale(1);
+                opacity: 1;
+            }
+        }
+
+        .docs-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 900px;
+            max-height: 85vh;
+            background: linear-gradient(135deg, #1e2328 0%, #252a30 100%);
+            border: 1px solid #3d4a5c;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+            animation: slideIn 0.3s ease;
+            overflow: hidden;
+        }
+
+        .docs-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 25px;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            border-bottom: 1px solid #3d4a5c;
+        }
+
+        .docs-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #e1e5e9;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .docs-title::before {
+            content: '📚';
+            font-size: 28px;
+        }
+
+        .docs-close {
+            background: rgba(185, 28, 28, 0.8);
+            color: white;
+            border: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(185, 28, 28, 0.3);
+        }
+
+        .docs-close:hover {
+            background: rgba(220, 38, 38, 0.9);
+            transform: scale(1.1);
+            box-shadow: 0 4px 16px rgba(185, 28, 28, 0.4);
+        }
+
+        .docs-body {
+            padding: 25px;
+            max-height: calc(85vh - 120px);
+            overflow-y: auto;
+            font-size: 15px;
+            line-height: 1.7;
+            color: #e1e5e9;
+        }
+
+        .docs-body::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .docs-body::-webkit-scrollbar-track {
+            background: #2a2f35;
+            border-radius: 4px;
+        }
+
+        .docs-body::-webkit-scrollbar-thumb {
+            background: #4a6fa5;
+            border-radius: 4px;
+        }
+
+        .docs-body::-webkit-scrollbar-thumb:hover {
+            background: #5d7fb8;
+        }
+
+        /* Markdown Styling */
+        .docs-body h1 {
+            font-size: 2.2em;
+            color: #4ecdc4;
+            margin: 0 0 20px 0;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #3d4a5c;
+            font-weight: 700;
+        }
+
+        .docs-body h2 {
+            font-size: 1.8em;
+            color: #5d7fb8;
+            margin: 35px 0 18px 0;
+            font-weight: 600;
+            position: relative;
+        }
+
+        .docs-body h2::before {
+            content: '';
+            position: absolute;
+            left: -20px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 4px;
+            height: 24px;
+            background: linear-gradient(135deg, #5d7fb8, #4ecdc4);
+            border-radius: 2px;
+        }
+
+        .docs-body h3 {
+            font-size: 1.4em;
+            color: #94a3b8;
+            margin: 25px 0 15px 0;
+            font-weight: 600;
+        }
+
+        .docs-body p {
+            margin: 15px 0;
+            text-align: justify;
+        }
+
+        .docs-body ul, .docs-body ol {
+            margin: 15px 0;
+            padding-left: 25px;
+        }
+
+        .docs-body li {
+            margin: 8px 0;
+        }
+
+        .docs-body code {
+            background: rgba(74, 111, 165, 0.2);
+            color: #4ecdc4;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+            border: 1px solid rgba(74, 111, 165, 0.3);
+        }
+
+        .docs-body pre {
+            background: #1a1f24;
+            border: 1px solid #3d4a5c;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .docs-body pre code {
+            background: none;
+            padding: 0;
+            border: none;
+            color: #e1e5e9;
+            font-size: inherit;
+        }
+
+        .docs-body blockquote {
+            border-left: 4px solid #5d7fb8;
+            background: rgba(93, 127, 184, 0.1);
+            margin: 20px 0;
+            padding: 15px 20px;
+            border-radius: 0 8px 8px 0;
+            font-style: italic;
+            color: #94a3b8;
+        }
+
+        .docs-body a {
+            color: #4ecdc4;
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .docs-body a:hover {
+            color: #5dd6cc;
+            border-bottom-color: #4ecdc4;
+        }
+
+        .docs-body table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: rgba(26, 31, 36, 0.5);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #3d4a5c;
+        }
+
+        .docs-body th, .docs-body td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #3d4a5c;
+        }
+
+        .docs-body th {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            font-weight: 600;
+            color: #e1e5e9;
+        }
+
+        .docs-body tr:hover {
+            background: rgba(74, 111, 165, 0.1);
+        }
+
+        .docs-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 25px;
+            font-size: 18px;
+            color: #94a3b8;
+        }
+
+        .docs-loading::before {
+            content: '';
+            width: 24px;
+            height: 24px;
+            border: 3px solid #3d4a5c;
+            border-top: 3px solid #5d7fb8;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .docs-error {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 25px;
+            font-size: 18px;
+            color: #ef4444;
+        }
+
+        .docs-error::before {
+            content: '⚠️';
+            font-size: 24px;
+            margin-right: 15px;
+        }
+
         @media (max-width: 768px) {
             .playground-container {
                 flex-direction: column;
@@ -355,6 +660,24 @@
                 position: static;
                 padding: 5px 10px;
             }
+
+            .docs-content {
+                width: 95%;
+                max-height: 90vh;
+            }
+
+            .docs-header {
+                padding: 15px 20px;
+            }
+
+            .docs-title {
+                font-size: 20px;
+            }
+
+            .docs-body {
+                padding: 20px;
+                max-height: calc(90vh - 100px);
+            }
         }
     </style>
 </head>
@@ -381,6 +704,7 @@
                     </div-->
                 </div>
                 <div class="toolbar-right">
+                    <button id="docs-btn">📚 Documentation</button>
                     <button id="run-btn">▶️ Run Code</button>
                 </div>
             </div>
@@ -399,6 +723,19 @@
             <div class="canvas-container">
                 <canvas id="playground-canvas" width="600" height="400" tabindex="1"></canvas>
                 <div id="error-overlay" class="error-overlay">No valid code to run</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Documentation Modal -->
+    <div id="docs-modal" class="docs-modal">
+        <div class="docs-content">
+            <div class="docs-header">
+                <div class="docs-title">WebGL Canvas Documentation</div>
+                <button id="docs-close" class="docs-close">×</button>
+            </div>
+            <div id="docs-body" class="docs-body">
+                <div class="docs-loading">Loading documentation...</div>
             </div>
         </div>
     </div>
@@ -430,6 +767,55 @@
             });
         }
 
+        // Simple markdown parser
+        function parseMarkdown(text) {
+            // Handle headings
+            text = text.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+            text = text.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+            text = text.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+
+            // Handle bold and italic
+            text = text.replace(/\*\*\*(.*?)\*\*\*/gim, '<strong><em>$1</em></strong>');
+            text = text.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
+            text = text.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+
+            // Handle inline code
+            text = text.replace(/`([^`]+)`/gim, '<code>$1</code>');
+
+            // Handle code blocks
+            text = text.replace(/```([^`]+)```/gims, '<pre><code>$1</code></pre>');
+
+            // Handle links
+            text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank">$1</a>');
+
+            // Handle blockquotes
+            text = text.replace(/^> (.*)$/gim, '<blockquote>$1</blockquote>');
+
+            // Handle unordered lists
+            text = text.replace(/^\* (.*)$/gim, '<li>$1</li>');
+            text = text.replace(/(<li>.*<\/li>)/gims, '<ul>$1</ul>');
+
+            // Handle ordered lists
+            text = text.replace(/^\d+\. (.*)$/gim, '<li>$1</li>');
+
+            // Handle paragraphs
+            text = text.replace(/\n\n/gim, '</p><p>');
+            text = '<p>' + text + '</p>';
+
+            // Clean up empty paragraphs
+            text = text.replace(/<p><\/p>/gim, '');
+            text = text.replace(/<p>(<h[1-6]>)/gim, '$1');
+            text = text.replace(/(<\/h[1-6]>)<\/p>/gim, '$1');
+            text = text.replace(/<p>(<ul>)/gim, '$1');
+            text = text.replace(/(<\/ul>)<\/p>/gim, '$1');
+            text = text.replace(/<p>(<blockquote>)/gim, '$1');
+            text = text.replace(/(<\/blockquote>)<\/p>/gim, '$1');
+            text = text.replace(/<p>(<pre>)/gim, '$1');
+            text = text.replace(/(<\/pre>)<\/p>/gim, '$1');
+
+            return text;
+        }
+
         // Load examples.js and webgl-canvas.js only once
         Promise.all([
             loadScript('examples.js').catch(() => console.log('examples.js not found - skipping')),
@@ -445,11 +831,15 @@
                     this.canvas = document.getElementById('playground-canvas');
                     this.editor = document.getElementById('code-editor');
                     this.runBtn = document.getElementById('run-btn');
+                    this.docsBtn = document.getElementById('docs-btn');
                     this.autoRunCheckbox = document.getElementById('auto-run');
                     this.errorOverlay = document.getElementById('error-overlay');
                     this.fpsCounter = document.getElementById('fps-counter');
                     this.resizer = document.getElementById('resizer');
                     this.examplesSelect = document.getElementById('examples-select');
+                    this.docsModal = document.getElementById('docs-modal');
+                    this.docsClose = document.getElementById('docs-close');
+                    this.docsBody = document.getElementById('docs-body');
 
                     console.log('Canvas element:', this.canvas);
                     console.log('Editor element:', this.editor);
@@ -466,6 +856,7 @@
                     this.setupExamples();
                     this.setupResizer();
                     this.setupEventListeners();
+                    this.setupDocumentation();
                     this.loadDefaultCode();
                     this.runCode();
                 }
@@ -637,12 +1028,86 @@
                     }
                 }
 
+                setupDocumentation() {
+                    // Documentation modal event listeners
+                    this.docsBtn.addEventListener('click', () => this.showDocumentation());
+                    this.docsClose.addEventListener('click', () => this.hideDocumentation());
+                    
+                    // Close modal when clicking outside content
+                    this.docsModal.addEventListener('click', (e) => {
+                        if (e.target === this.docsModal) {
+                            this.hideDocumentation();
+                        }
+                    });
+
+                    // Close modal with escape key
+                    document.addEventListener('keydown', (e) => {
+                        if (e.key === 'Escape' && this.docsModal.classList.contains('show')) {
+                            this.hideDocumentation();
+                        }
+                    });
+                }
+
+                async showDocumentation() {
+                    this.docsModal.classList.add('show');
+                    this.docsBody.innerHTML = '<div class="docs-loading">Loading documentation...</div>';
+
+                    try {
+                        // Try to load README.md from the parent directory
+                        const readmePaths = [
+                            '../README.md',
+                            'README.md',
+                            '../docs/README.md'
+                        ];
+
+                        let readmeContent = null;
+                        
+                        for (const path of readmePaths) {
+                            try {
+                                const response = await fetch(path);
+                                if (response.ok) {
+                                    readmeContent = await response.text();
+                                    break;
+                                }
+                            } catch (e) {
+                                // Continue to next path
+                                continue;
+                            }
+                        }
+
+                       if (readmeContent) {
+                            // Use Marked to parse markdown to HTML
+                            const htmlContent = marked.parse(readmeContent);
+                            
+                            // Apply Prism syntax highlighting to code blocks
+                            this.docsBody.innerHTML = htmlContent;
+                            Prism.highlightAllUnder(this.docsBody);  // Highlight all code blocks within docsBody
+                        } else {
+                            throw new Error('README.md not found');
+                        }
+                    } catch (error) {
+                        console.error('Error loading documentation:', error);
+                        this.docsBody.innerHTML = `
+                            <div class="docs-error">
+                                Failed to load documentation
+                                <p style="margin-top: 10px; font-size: 14px; opacity: 0.8;">
+                                    Make sure README.md is available in the project root.
+                                </p>
+                            </div>
+                        `;
+                    }
+                }
+
+                hideDocumentation() {
+                    this.docsModal.classList.remove('show');
+                }
+
                 setupEventListeners() {
                     this.runBtn.addEventListener('click', () => this.runCode());
 
                     // For fallback textarea
                     this.editor.addEventListener('input', () => {
-                        if (this.autoRunCheckbox.checked) {
+                        if (this.autoRunCheckbox && this.autoRunCheckbox.checked) {
                             clearTimeout(this.autoRunTimer);
                             this.autoRunTimer = setTimeout(() => this.runCode(), 500);
                         }
