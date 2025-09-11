@@ -29,6 +29,15 @@ A comprehensive WebGL-powered 2D graphics library that provides a familiar HTML5
 - **Composite Operations** - Blending modes like source-over, multiply, screen, etc.
 - **Shadow Effects** - `shadowColor`, `shadowBlur`, `shadowOffsetX`, `shadowOffsetY`
 
+### Image Color Manipulation
+- **HSL Adjustments** - `imageHue`, `imageSaturation`, `imageLightness` for color shifting
+- **Brightness/Contrast** - `imageBrightness`, `imageContrast` for exposure control
+- **Color Effects** - `imageColorMode` for grayscale, sepia, invert, black & white filters
+- **Advanced Color** - `imageColorTint`, `imageColorMultiply`, `imageColorAdd` for complex blending
+- **Gamma/Exposure** - `imageGamma`, `imageExposure` for professional color grading
+- **Filter Presets** - `applyImageFilter()` with built-in effects like 'vintage', 'cold', 'warm'
+- **Batch Operations** - `setImageColors()` and `getImageColors()` for efficient property management
+
 ### Post-Processing Effects
 - **Blur Effects** - Gaussian blur with configurable radius
 - **Bloom/Glow Effects** - HDR bloom with threshold and intensity controls
@@ -41,7 +50,7 @@ A comprehensive WebGL-powered 2D graphics library that provides a familiar HTML5
 
 ### Performance Features
 - **Optimized Batching** - Groups similar shapes into single GPU draw calls
-- **Custom Batch Size** - Configurable batch sizes up to 5,000 objects (with safety limits)
+- **Custom Batch Size** - Configurable batch sizes up to 8,000 objects (with safety limits)
 - **Texture Caching** - Automatic image texture management and reuse
 - **Memory Efficient** - Smart buffer management and resource cleanup
 - **Context Loss Protection** - Robust handling of WebGL context loss/restore
@@ -1023,6 +1032,612 @@ demonstratePostEffects();
 createEffectControls();
 ```
 
+### 8. Professional Image Color Manipulation
+
+Advanced GPU-accelerated image color processing with real-time adjustments:
+
+```javascript
+const ctx = new WebGLCanvas(canvas, {
+    enableFullscreen: true
+});
+
+// Use a free online image for demonstration
+const imageUrl = 'https://picsum.photos/400/300?random=1';
+
+// Create image manipulation demo
+async function createImageColorDemo() {
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; // Enable CORS for external images
+    
+    return new Promise((resolve) => {
+        img.onload = () => {
+            const originalWidth = img.width;
+            const originalHeight = img.height;
+            const scale = Math.min(200 / originalWidth, 150 / originalHeight);
+            const displayWidth = originalWidth * scale;
+            const displayHeight = originalHeight * scale;
+            
+            resolve({ img, displayWidth, displayHeight });
+        };
+        img.src = imageUrl;
+    });
+}
+
+// Image filter gallery
+async function imageManipulationGallery() {
+    const { img, displayWidth, displayHeight } = await createImageColorDemo();
+    
+    // Define filter configurations
+    const filterExamples = [
+        {
+            name: 'Original',
+            settings: {},
+            description: 'No filters applied'
+        },
+        {
+            name: 'Vintage',
+            settings: {
+                hue: 30,
+                saturation: 0.7,
+                contrast: 1.2,
+                brightness: 0.05,
+                tint: [0.9, 0.8, 0.6, 0.15]
+            },
+            description: 'Warm vintage film look'
+        },
+        {
+            name: 'Cold Blue',
+            settings: {
+                hue: -20,
+                saturation: 0.8,
+                brightness: -0.1,
+                tint: [0.6, 0.8, 1.0, 0.2]
+            },
+            description: 'Cool blue cinematic tone'
+        },
+        {
+            name: 'High Contrast',
+            settings: {
+                contrast: 1.8,
+                saturation: 1.4,
+                brightness: 0.1,
+                gamma: 0.8
+            },
+            description: 'Dramatic high contrast'
+        },
+        {
+            name: 'Sepia Tone',
+            settings: {
+                mode: 2,
+                brightness: 0.1,
+                contrast: 1.1
+            },
+            description: 'Classic sepia photograph'
+        },
+        {
+            name: 'Grayscale',
+            settings: {
+                mode: 1,
+                contrast: 1.2
+            },
+            description: 'Black and white'
+        },
+        {
+            name: 'Neon Glow',
+            settings: {
+                hue: 180,
+                saturation: 2.0,
+                brightness: 0.2,
+                contrast: 1.5,
+                gamma: 0.7
+            },
+            description: 'Cyberpunk neon effect'
+        },
+        {
+            name: 'Faded Film',
+            settings: {
+                opacity: 0.8,
+                contrast: 0.7,
+                saturation: 0.6,
+                brightness: 0.15,
+                tint: [1, 0.95, 0.85, 0.1]
+            },
+            description: 'Faded old film look'
+        },
+        {
+            name: 'Matrix',
+            settings: {
+                hue: 120,
+                saturation: 0.3,
+                brightness: -0.2,
+                contrast: 1.3,
+                tint: [0, 1, 0, 0.1]
+            },
+            description: 'Green matrix digital rain'
+        },
+        {
+            name: 'Inverted',
+            settings: {
+                mode: 3,
+                hue: 180
+            },
+            description: 'Color negative effect'
+        },
+        {
+            name: 'Overexposed',
+            settings: {
+                exposure: 1.5,
+                brightness: 0.3,
+                saturation: 0.8,
+                contrast: 0.8
+            },
+            description: 'Bright overexposed look'
+        },
+        {
+            name: 'Underexposed',
+            settings: {
+                exposure: -1.2,
+                brightness: -0.2,
+                contrast: 1.4,
+                saturation: 1.2
+            },
+            description: 'Dark moody shadows'
+        }
+    ];
+    
+    // Layout configuration
+    const cols = 4;
+    const rows = Math.ceil(filterExamples.length / cols);
+    const padding = 20;
+    const labelHeight = 40;
+    const totalWidth = cols * displayWidth + (cols - 1) * padding;
+    const totalHeight = rows * (displayHeight + labelHeight) + (rows - 1) * padding;
+    
+    // Resize canvas to fit gallery
+    ctx.canvas.width = Math.max(800, totalWidth + 40);
+    ctx.canvas.height = Math.max(600, totalHeight + 80);
+    ctx.resize(ctx.canvas.width, ctx.canvas.height);
+    
+    function drawImageGallery() {
+        // Clear background
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillCanvas();
+        
+        // Gallery title
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 28px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('GPU-Accelerated Image Color Manipulation Gallery', ctx.canvas.width / 2, 40);
+        
+        // Draw each filtered image
+        filterExamples.forEach((filter, index) => {
+            const col = index % cols;
+            const row = Math.floor(index / cols);
+            const x = 20 + col * (displayWidth + padding);
+            const y = 60 + row * (displayHeight + labelHeight + padding);
+            
+            // Reset all image properties
+            ctx.resetImageColors();
+            
+            // Apply current filter settings
+            if (filter.settings.hue !== undefined) ctx.imageHue = filter.settings.hue;
+            if (filter.settings.saturation !== undefined) ctx.imageSaturation = filter.settings.saturation;
+            if (filter.settings.lightness !== undefined) ctx.imageLightness = filter.settings.lightness;
+            if (filter.settings.brightness !== undefined) ctx.imageBrightness = filter.settings.brightness;
+            if (filter.settings.contrast !== undefined) ctx.imageContrast = filter.settings.contrast;
+            if (filter.settings.opacity !== undefined) ctx.imageOpacity = filter.settings.opacity;
+            if (filter.settings.tint !== undefined) ctx.imageColorTint = filter.settings.tint;
+            if (filter.settings.mode !== undefined) ctx.imageColorMode = filter.settings.mode;
+            if (filter.settings.multiply !== undefined) ctx.imageColorMultiply = filter.settings.multiply;
+            if (filter.settings.add !== undefined) ctx.imageColorAdd = filter.settings.add;
+            if (filter.settings.gamma !== undefined) ctx.imageGamma = filter.settings.gamma;
+            if (filter.settings.exposure !== undefined) ctx.imageExposure = filter.settings.exposure;
+            
+            // Draw the filtered image
+            ctx.drawImage(img, 0, 0, img.width, img.height, x, y, displayWidth, displayHeight);
+            
+            // Draw border
+            ctx.strokeStyle = '#444444';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x - 1, y - 1, displayWidth + 2, displayHeight + 2);
+            
+            // Draw labels
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(filter.name, x + displayWidth / 2, y + displayHeight + 20);
+            
+            ctx.fillStyle = '#cccccc';
+            ctx.font = '12px Arial';
+            ctx.fillText(filter.description, x + displayWidth / 2, y + displayHeight + 35);
+        });
+        
+        // Instructions
+        ctx.fillStyle = '#888888';
+        ctx.font = '14px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('All effects are rendered in real-time using GPU shaders', ctx.canvas.width / 2, ctx.canvas.height - 10);
+    }
+    
+    drawImageGallery();
+    ctx.flush();
+}
+
+// Interactive color adjustment demo
+async function interactiveColorDemo() {
+    const { img, displayWidth, displayHeight } = await createImageColorDemo();
+    
+    // Create control panel
+    const controls = {
+        hue: 0,
+        saturation: 1,
+        lightness: 0,
+        brightness: 0,
+        contrast: 1,
+        gamma: 1,
+        exposure: 0
+    };
+    
+    // Mouse position for live preview
+    let mouseX = 0, mouseY = 0;
+    let isMouseDown = false;
+    
+    ctx.canvas.addEventListener('mousemove', (e) => {
+        const rect = ctx.canvas.getBoundingClientRect();
+        mouseX = (e.clientX - rect.left) * (ctx.canvas.width / rect.width);
+        mouseY = (e.clientY - rect.top) * (ctx.canvas.height / rect.height);
+        
+        if (isMouseDown) {
+            // Adjust parameters based on mouse position
+            controls.hue = ((mouseX / ctx.canvas.width) - 0.5) * 360;
+            controls.saturation = Math.max(0, (mouseY / ctx.canvas.height) * 2);
+            updateDisplay();
+        }
+    });
+    
+    ctx.canvas.addEventListener('mousedown', () => isMouseDown = true);
+    ctx.canvas.addEventListener('mouseup', () => isMouseDown = false);
+    
+    // Keyboard controls
+    document.addEventListener('keydown', (e) => {
+        const step = e.shiftKey ? 0.1 : 0.05;
+        
+        switch(e.key.toLowerCase()) {
+            case 'h': controls.hue = (controls.hue + 10) % 360; break;
+            case 'g': controls.hue = (controls.hue - 10 + 360) % 360; break;
+            case 's': controls.saturation = Math.max(0, controls.saturation + step); break;
+            case 'a': controls.saturation = Math.max(0, controls.saturation - step); break;
+            case 'w': controls.brightness = Math.min(1, controls.brightness + step); break;
+            case 'q': controls.brightness = Math.max(-1, controls.brightness - step); break;
+            case 'd': controls.contrast = Math.max(0, controls.contrast + step); break;
+            case 'f': controls.contrast = Math.max(0, controls.contrast - step); break;
+            case 'r': // Reset all
+                Object.keys(controls).forEach(key => {
+                    controls[key] = key === 'saturation' || key === 'contrast' || key === 'gamma' ? 1 : 0;
+                });
+                break;
+        }
+        updateDisplay();
+    });
+    
+    function updateDisplay() {
+        // Clear background
+        ctx.fillStyle = '#2a2a2a';
+        ctx.fillCanvas();
+        
+        // Title
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 24px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Interactive Image Color Adjustment', ctx.canvas.width / 2, 30);
+        
+        // Draw original image
+        ctx.resetImageColors();
+        const originalX = 50;
+        const originalY = 60;
+        ctx.drawImage(img, originalX, originalY, displayWidth * 1.5, displayHeight * 1.5);
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Original', originalX + displayWidth * 0.75, originalY + displayHeight * 1.5 + 20);
+        
+        // Draw adjusted image
+        ctx.imageHue = controls.hue;
+        ctx.imageSaturation = controls.saturation;
+        ctx.imageLightness = controls.lightness;
+        ctx.imageBrightness = controls.brightness;
+        ctx.imageContrast = controls.contrast;
+        ctx.imageGamma = controls.gamma;
+        ctx.imageExposure = controls.exposure;
+        
+        const adjustedX = originalX + displayWidth * 1.5 + 50;
+        const adjustedY = originalY;
+        ctx.drawImage(img, adjustedX, adjustedY, displayWidth * 1.5, displayHeight * 1.5);
+        
+        ctx.fillText('Adjusted', adjustedX + displayWidth * 0.75, adjustedY + displayHeight * 1.5 + 20);
+        
+        // Display current values
+        const valuesY = adjustedY + displayHeight * 1.5 + 60;
+        ctx.fillStyle = '#cccccc';
+        ctx.font = '14px monospace';
+        ctx.textAlign = 'left';
+        
+        const values = [
+            `Hue: ${controls.hue.toFixed(1)}°`,
+            `Saturation: ${controls.saturation.toFixed(2)}`,
+            `Lightness: ${controls.lightness.toFixed(2)}`,
+            `Brightness: ${controls.brightness.toFixed(2)}`,
+            `Contrast: ${controls.contrast.toFixed(2)}`,
+            `Gamma: ${controls.gamma.toFixed(2)}`,
+            `Exposure: ${controls.exposure.toFixed(2)}`
+        ];
+        
+        values.forEach((value, i) => {
+            ctx.fillText(value, 50, valuesY + i * 20);
+        });
+        
+        // Instructions
+        ctx.fillStyle = '#888888';
+        ctx.font = '12px Arial';
+        const instructions = [
+            'Drag mouse to adjust Hue (X-axis) and Saturation (Y-axis)',
+            'Keyboard: H/G=Hue, S/A=Saturation, W/Q=Brightness, D/F=Contrast, R=Reset'
+        ];
+        
+        instructions.forEach((instruction, i) => {
+            ctx.fillText(instruction, 50, ctx.canvas.height - 30 + i * 15);
+        });
+    }
+    
+    // Auto-animate demonstration
+    let autoDemo = true;
+    let time = 0;
+    
+    function animate() {
+        if (autoDemo && !isMouseDown) {
+            time += 0.02;
+            controls.hue = Math.sin(time) * 60;
+            controls.saturation = 0.8 + Math.sin(time * 0.7) * 0.4;
+            controls.brightness = Math.sin(time * 0.5) * 0.2;
+            controls.contrast = 1 + Math.sin(time * 0.3) * 0.3;
+            updateDisplay();
+        }
+        
+        ctx.flush();
+        requestAnimationFrame(animate);
+    }
+    
+    // Disable auto demo on user interaction
+    ctx.canvas.addEventListener('click', () => autoDemo = false);
+    
+    updateDisplay();
+    animate();
+}
+
+// Batch processing demonstration
+async function batchProcessingDemo() {
+    // Create multiple images with different effects
+    const images = await Promise.all([
+        createImageColorDemo(),
+        createImageColorDemo(),
+        createImageColorDemo()
+    ]);
+    
+    const effects = [
+        { name: 'Warm Sunset', filter: 'warm' },
+        { name: 'Cold Winter', filter: 'cold' },
+        { name: 'Dramatic B&W', filter: 'dramatic' }
+    ];
+    
+    function processBatch() {
+        ctx.fillStyle = '#1e1e1e';
+        ctx.fillCanvas();
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 22px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Batch Image Processing with Preset Filters', 400, 30);
+        
+        images.forEach(({ img, displayWidth, displayHeight }, index) => {
+            const x = 50 + index * 250;
+            const y = 60;
+            
+            // Apply preset filter
+            ctx.applyImageFilter(effects[index].filter, 1.0);
+            
+            // Draw processed image
+            ctx.drawImage(img, x, y, displayWidth, displayHeight);
+            
+            // Label
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '16px Arial';
+            ctx.fillText(effects[index].name, x + displayWidth / 2, y + displayHeight + 25);
+            
+            // Show settings used
+            const settings = ctx.getImageColors();
+            ctx.fillStyle = '#aaaaaa';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'left';
+            
+            const settingsText = [
+                `H: ${settings.hue}`,
+                `S: ${settings.saturation.toFixed(1)}`,
+                `B: ${settings.brightness.toFixed(1)}`,
+                `C: ${settings.contrast.toFixed(1)}`
+            ];
+            
+            settingsText.forEach((text, i) => {
+                ctx.fillText(text, x, y + displayHeight + 45 + i * 12);
+            });
+        });
+        
+        ctx.textAlign = 'center'; // Reset alignment
+    }
+    
+    processBatch();
+    ctx.flush();
+}
+
+// Run demonstrations
+console.log('Loading image color manipulation demos...');
+
+// Run gallery demo by default
+imageManipulationGallery().catch(console.error);
+
+// Uncomment to run interactive demo instead:
+// interactiveColorDemo().catch(console.error);
+
+// Uncomment to run batch processing demo:
+// batchProcessingDemo().catch(console.error);
+```
+
+### Real-Time Color Grading Pipeline
+
+Professional color grading workflow for video-like effects:
+
+```javascript
+const ctx = new WebGLCanvas(canvas);
+
+// Professional color grading class
+class ColorGrader {
+    constructor(webglCanvas) {
+        this.ctx = webglCanvas;
+        this.presets = {
+            cinematic: {
+                name: 'Cinematic',
+                brightness: -0.05,
+                contrast: 1.15,
+                saturation: 0.9,
+                hue: 0,
+                gamma: 0.9,
+                tint: [1, 0.95, 0.85, 0.08]
+            },
+            documentary: {
+                name: 'Documentary',
+                brightness: 0.02,
+                contrast: 1.08,
+                saturation: 0.85,
+                hue: 0,
+                gamma: 1.1
+            },
+            scifi: {
+                name: 'Sci-Fi Blue',
+                brightness: -0.1,
+                contrast: 1.25,
+                saturation: 0.7,
+                hue: -15,
+                tint: [0.7, 0.85, 1.0, 0.15]
+            },
+            horror: {
+                name: 'Horror Green',
+                brightness: -0.2,
+                contrast: 1.4,
+                saturation: 0.6,
+                hue: 30,
+                gamma: 0.8,
+                tint: [0.8, 1.0, 0.7, 0.1]
+            },
+            romance: {
+                name: 'Romantic Warm',
+                brightness: 0.1,
+                contrast: 0.95,
+                saturation: 1.1,
+                hue: 10,
+                tint: [1.0, 0.9, 0.8, 0.12]
+            }
+        };
+    }
+    
+    applyGrade(presetName, intensity = 1.0) {
+        const preset = this.presets[presetName];
+        if (!preset) return;
+        
+        this.ctx.setImageColors({
+            brightness: preset.brightness * intensity,
+            contrast: 1 + (preset.contrast - 1) * intensity,
+            saturation: 1 + (preset.saturation - 1) * intensity,
+            hue: preset.hue * intensity,
+            gamma: 1 + (preset.gamma - 1) * intensity,
+            tint: preset.tint ? [
+                preset.tint[0],
+                preset.tint[1], 
+                preset.tint[2],
+                preset.tint[3] * intensity
+            ] : [0, 0, 0, 0]
+        });
+    }
+    
+    createCustomGrade(params) {
+        return {
+            name: params.name || 'Custom',
+            brightness: params.brightness || 0,
+            contrast: params.contrast || 1,
+            saturation: params.saturation || 1,
+            hue: params.hue || 0,
+            gamma: params.gamma || 1,
+            tint: params.tint || [0, 0, 0, 0]
+        };
+    }
+}
+
+// Usage example
+const grader = new ColorGrader(ctx);
+
+async function demonstrateColorGrading() {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = 'https://picsum.photos/800/400?random=2';
+    
+    img.onload = () => {
+        let currentPreset = 0;
+        const presetNames = Object.keys(grader.presets);
+        
+        function renderWithGrading() {
+            ctx.fillStyle = '#000000';
+            ctx.fillCanvas();
+            
+            // Apply current color grading preset
+            const presetName = presetNames[currentPreset];
+            grader.applyGrade(presetName);
+            
+            // Draw the graded image
+            ctx.drawImage(img, 100, 50, 600, 300);
+            
+            // Display preset info
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Color Grading: ${grader.presets[presetName].name}`, 400, 30);
+            
+            ctx.font = '16px Arial';
+            ctx.fillText('Press SPACE to cycle presets', 400, 380);
+            
+            ctx.flush();
+        }
+        
+        // Cycle presets automatically
+        setInterval(() => {
+            currentPreset = (currentPreset + 1) % presetNames.length;
+            renderWithGrading();
+        }, 2500);
+        
+        // Manual control
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                currentPreset = (currentPreset + 1) % presetNames.length;
+                renderWithGrading();
+                e.preventDefault();
+            }
+        });
+        
+        renderWithGrading();
+    };
+}
+
+demonstrateColorGrading();
+```
+
 ### Advanced Post-Processing Techniques
 
 ```javascript
@@ -1110,6 +1725,101 @@ function createDynamicPostProcessing(ctx) {
 }
 
 // createDynamicPostProcessing(ctx);
+```
+
+## Good post-processing practice 
+``` javascript
+// Good: Enable effects once, not every frame
+const ctx = new WebGLCanvas(canvas);
+ctx.addBloom(1.0, 0.5, 2.0);  // Do this once at startup
+
+function animate() {
+    // Don't add/remove effects every frame!
+    // ctx.clearPostEffects(); // ❌ Bad!
+    // ctx.addBloom(...);       // ❌ Bad!
+    
+    // Just draw your scene
+    ctx.clear();
+    
+    // Draw your animated objects
+    drawScene();
+    
+    // Flush once at the end
+    ctx.flush(); // ✅ Good - includes post-processing
+    
+    requestAnimationFrame(animate);
+}
+
+// If you need to change effect parameters dynamically:
+ctx.updatePostEffect('bloom', { strength: 0.8 }); // ✅ Better
+```
+
+## 🎨 Image Color Manipulation API
+
+### Properties
+
+**HSL Color Space:**
+- `imageHue` - Hue shift in degrees (-180 to 180)
+- `imageSaturation` - Saturation multiplier (0+ where 1 = normal)  
+- `imageLightness` - Lightness adjustment (-1 to 1 where 0 = normal)
+
+**Exposure Control:**
+- `imageBrightness` - Brightness offset (-1 to 1 where 0 = normal)
+- `imageContrast` - Contrast multiplier (0+ where 1 = normal)
+- `imageGamma` - Gamma correction (0.1 to 3 where 1 = normal)
+- `imageExposure` - Exposure stops (-3 to 3 where 0 = normal)
+
+**Color Effects:**
+- `imageOpacity` - Image opacity (0 to 1 where 1 = opaque)
+- `imageColorMode` - Filter mode (0=normal, 1=grayscale, 2=sepia, 3=invert, 4=threshold)
+- `imageColorTint` - RGBA tint overlay color array [r, g, b, a]
+- `imageColorMultiply` - RGBA multiply blend color array [r, g, b, a]
+- `imageColorAdd` - RGBA additive blend color array [r, g, b, a]
+
+### Methods
+
+**Batch Operations:**
+- `setImageColors(options)` - Set multiple properties at once
+- `getImageColors()` - Get current color settings object
+- `resetImageColors()` - Reset all properties to defaults
+
+**Filter Presets:**
+- `applyImageFilter(name, intensity?)` - Apply named preset filter
+  - Available filters: 'grayscale', 'sepia', 'invert', 'vintage', 'cold', 'warm', 'dramatic', 'fade', 'bright', 'dark'
+  - Intensity: 0-1 multiplier for effect strength
+
+**Usage Examples:**
+
+```javascript
+// Individual property adjustments
+ctx.imageHue = 45;          // Shift hue 45 degrees
+ctx.imageSaturation = 1.3;  // Increase saturation 30%
+ctx.imageBrightness = 0.2;  // Increase brightness
+
+// Batch property setting
+ctx.setImageColors({
+    hue: -30,
+    saturation: 0.8,
+    brightness: 0.1,
+    contrast: 1.2,
+    tint: [1, 0.9, 0.7, 0.15]  // Warm tint
+});
+
+// Apply preset filters
+ctx.applyImageFilter('vintage');      // Full vintage effect
+ctx.applyImageFilter('sepia', 0.5);   // 50% sepia intensity
+
+// Professional color grading
+ctx.setImageColors({
+    gamma: 0.9,        // Slightly darker gamma
+    exposure: 0.3,     // Increase exposure
+    contrast: 1.15,    // More contrast
+    saturation: 0.95   // Slightly less saturation
+});
+
+// Draw image with all effects applied
+ctx.drawImage(myImage, 0, 0);
+ctx.flush(); // Apply effects and render
 ```
 
 ## 🎯 Complete API Reference
@@ -1329,17 +2039,6 @@ ctx.setBatchSize(2000);
 // Potentially problematic: May cause context loss
 ctx.setBatchSize(10000); // Will be clamped to 5000
 ```
-
-## 🚀 Performance Characteristics
-
-- **Rectangle Batching**: 5,000+ rectangles @ 60fps
-- **Circle Rendering**: 3,000+ circles @ 60fps  
-- **Line Drawing**: 10,000+ line segments @ 60fps
-- **Image Rendering**: 1,000+ images @ 60fps (with texture caching)
-- **Text Rendering**: 500+ text objects @ 60fps
-- **Memory Usage**: ~3-5MB for standard batching buffers
-- **Context Loss Recovery**: <100ms on modern hardware
-- **Startup Time**: <50ms initialization
 
 ## 🔧 Browser Support
 

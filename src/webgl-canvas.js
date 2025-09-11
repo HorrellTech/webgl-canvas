@@ -13,7 +13,7 @@ class WebGLCanvas {
             pixelWidth: options.pixelWidth || canvas.width,
             pixelHeight: options.pixelHeight || canvas.height,
             pixelScale: options.pixelScale || 1,
-            batchSize: Math.min(options.batchSize || 5000, 5000), // Max objects per batch
+            batchSize: Math.min(options.batchSize || 8000, 8000), // Max objects per batch
             ...options
         };
 
@@ -41,7 +41,7 @@ class WebGLCanvas {
             // WebGL context with better stability settings
             this.gl = canvas.getContext('webgl', {
                 preserveDrawingBuffer: true,
-                antialias: false,
+                antialias: true,
                 alpha: true,
                 premultipliedAlpha: true,
                 failIfMajorPerformanceCaveat: false,
@@ -83,7 +83,21 @@ class WebGLCanvas {
             shadowOffsetX: 0,
             shadowOffsetY: 0,
             imageSmoothingEnabled: true,
-            transform: this.createIdentityMatrix()
+            transform: this.createIdentityMatrix(),
+
+            // Image color properties
+            imageHue: 0,            // -180 to 180 degrees
+            imageSaturation: 1,     // 0 to 2+ (1 = normal)
+            imageLightness: 0,      // -1 to 1 (0 = normal)
+            imageBrightness: 0,     // -1 to 1 (0 = normal)
+            imageContrast: 1,       // 0 to 2+ (1 = normal)
+            imageOpacity: 1,        // 0 to 1 (1 = opaque)
+            imageColorTint: [0, 0, 0, 0], // RGBA tint color
+            imageColorMode: 0,      // 0=normal, 1=grayscale, 2=sepia, 3=invert, 4=blackwhite
+            imageColorMultiply: [1, 1, 1, 1], // RGBA multiply
+            imageColorAdd: [0, 0, 0, 0],      // RGBA add
+            imageGamma: 1,          // 0.1 to 3 (1 = normal)
+            imageExposure: 0        // -3 to 3 (0 = normal)
         };
         this.stateStack = [];
 
@@ -138,6 +152,9 @@ class WebGLCanvas {
 
             // Create batch buffers
             this.createBatchBuffers();
+
+            // Create optimized image batch system
+            this.createImageBatchSystem();
 
             // Set initial viewport
             this.gl.viewport(0, 0, this.width, this.height);
@@ -335,7 +352,7 @@ class WebGLCanvas {
         // Log any warnings or info even if linking succeeds
         const log = gl.getProgramInfoLog(program);
         if (log) {
-            console.warn('Shader program link log:', log);
+            // console.warn('Shader program link log:', log);
         }
 
         if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
@@ -362,8 +379,8 @@ class WebGLCanvas {
         if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
             const error = gl.getShaderInfoLog(shader);
             const shaderType = type === gl.VERTEX_SHADER ? 'vertex' : 'fragment';
-            console.error(`${shaderType} shader compilation error:`, error);
-            console.error('Shader source:', source);
+            // console.error(`${shaderType} shader compilation error:`, error);
+            // console.error('Shader source:', source);
             gl.deleteShader(shader);
             throw new Error(`${shaderType} shader compilation error: ${error}`);
         }
@@ -372,7 +389,7 @@ class WebGLCanvas {
         const log = gl.getShaderInfoLog(shader);
         if (log && log.trim()) {
             const shaderType = type === gl.VERTEX_SHADER ? 'vertex' : 'fragment';
-            console.warn(`${shaderType} shader compile log:`, log);
+            // console.warn(`${shaderType} shader compile log:`, log);
         }
 
         return shader;
@@ -409,7 +426,7 @@ class WebGLCanvas {
             gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
 
             if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-                console.error('Framebuffer is not complete');
+                // console.error('Framebuffer is not complete');
             }
 
             this.postProcessing.framebuffers.push(framebuffer);
@@ -848,12 +865,21 @@ class WebGLCanvas {
     }
 
     /*
- * Specialized bloom rendering with proper multi-pass setup
- */
+    * Specialized bloom rendering with proper multi-pass setup
+    */
     renderBloomEffect() {
         const gl = this.gl;
 
-        // Create additional framebuffer for bloom if needed
+        // Get bloom parameters
+        const extractEffect = this.postProcessing.effects.find(e => e.name === 'bloomExtract');
+        const blurEffect = this.postProcessing.effects.find(e => e.name === 'blur');
+        const combineEffect = this.postProcessing.effects.find(e => e.name === 'bloomCombine');
+
+        const threshold = extractEffect ? extractEffect.parameters.threshold : 0.5;
+        const blurRadius = blurEffect ? blurEffect.parameters.radius : 2.0;
+        const strength = combineEffect ? combineEffect.parameters.strength : 1.0;
+
+        // Create bloom framebuffer only once
         if (!this.bloomFramebuffer) {
             this.bloomFramebuffer = gl.createFramebuffer();
             this.bloomTexture = gl.createTexture();
@@ -869,16 +895,7 @@ class WebGLCanvas {
             gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.bloomTexture, 0);
         }
 
-        // Get bloom parameters
-        const extractEffect = this.postProcessing.effects.find(e => e.name === 'bloomExtract');
-        const blurEffect = this.postProcessing.effects.find(e => e.name === 'blur');
-        const combineEffect = this.postProcessing.effects.find(e => e.name === 'bloomCombine');
-
-        const threshold = extractEffect ? extractEffect.parameters.threshold : 0.5;
-        const blurRadius = blurEffect ? blurEffect.parameters.radius : 2.0;
-        const strength = combineEffect ? combineEffect.parameters.strength : 1.0;
-
-        // Step 1: Extract bright areas to bloom framebuffer
+        // Extract bright areas
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFramebuffer);
         gl.viewport(0, 0, this.width, this.height);
         gl.clear(gl.COLOR_BUFFER_BIT);
@@ -893,33 +910,10 @@ class WebGLCanvas {
 
         this.renderFullscreenQuad(extractProgram);
 
-        // Step 2: Blur the bright areas (horizontal pass)
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcessing.framebuffers[0]);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        // Combined blur passes (more efficient)
+        this.renderOptimizedBlur(this.bloomTexture, blurRadius);
 
-        const blurProgram = this.shaders.postBlur;
-        gl.useProgram(blurProgram);
-
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.bloomTexture);
-        gl.uniform1i(gl.getUniformLocation(blurProgram, 'u_texture'), 0);
-        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_resolution'), this.width, this.height);
-        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_direction'), 1.0, 0.0);
-        gl.uniform1f(gl.getUniformLocation(blurProgram, 'u_blurRadius'), blurRadius);
-
-        this.renderFullscreenQuad(blurProgram);
-
-        // Step 3: Blur the bright areas (vertical pass)
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFramebuffer);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.postProcessing.tempTextures[0]);
-        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_direction'), 0.0, 1.0);
-
-        this.renderFullscreenQuad(blurProgram);
-
-        // Step 4: Combine original scene with bloom
+        // Final combine
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, this.width, this.height);
         gl.clear(gl.COLOR_BUFFER_BIT);
@@ -927,19 +921,46 @@ class WebGLCanvas {
         const combineProgram = this.shaders.postBloomCombine;
         gl.useProgram(combineProgram);
 
-        // Bind original scene texture
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.postProcessing.tempTextures[0]);
         gl.uniform1i(gl.getUniformLocation(combineProgram, 'u_texture'), 0);
 
-        // Bind bloom texture
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, this.bloomTexture);
         gl.uniform1i(gl.getUniformLocation(combineProgram, 'u_bloomTexture'), 1);
-
         gl.uniform1f(gl.getUniformLocation(combineProgram, 'u_bloomStrength'), strength);
 
         this.renderFullscreenQuad(combineProgram);
+    }
+
+    renderOptimizedBlur(inputTexture, radius) {
+        const gl = this.gl;
+        const blurProgram = this.shaders.postBlur;
+
+        gl.useProgram(blurProgram);
+        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_resolution'), this.width, this.height);
+        gl.uniform1f(gl.getUniformLocation(blurProgram, 'u_blurRadius'), radius);
+
+        // Horizontal pass
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcessing.framebuffers[1]);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, inputTexture);
+        gl.uniform1i(gl.getUniformLocation(blurProgram, 'u_texture'), 0);
+        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_direction'), 1.0, 0.0);
+
+        this.renderFullscreenQuad(blurProgram);
+
+        // Vertical pass
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.bloomFramebuffer);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.postProcessing.tempTextures[1]);
+        gl.uniform2f(gl.getUniformLocation(blurProgram, 'u_direction'), 0.0, 1.0);
+
+        this.renderFullscreenQuad(blurProgram);
     }
 
     /*
@@ -1244,34 +1265,154 @@ class WebGLCanvas {
         }
     `;
 
-        // Image vertex shader
+        // Enhanced Image vertex shader
         const imageVertexShader = `
-        precision mediump float;
-        attribute vec2 a_position;
-        attribute vec2 a_texCoord;
-        uniform vec2 u_resolution;
-        varying vec2 v_texCoord;
+    precision mediump float;
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    uniform vec2 u_resolution;
+    varying vec2 v_texCoord;
+    
+    void main() {
+        vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
+        normalized.y = -normalized.y;
         
-        void main() {
-            vec2 normalized = (a_position / u_resolution) * 2.0 - 1.0;
-            normalized.y = -normalized.y;
-            
-            gl_Position = vec4(normalized, 0, 1);
-            v_texCoord = a_texCoord;
-        }
-    `;
+        gl_Position = vec4(normalized, 0, 1);
+        v_texCoord = a_texCoord;
+    }
+`;
 
+        // Enhanced Image fragment shader with color manipulation
         const imageFragmentShader = `
-        precision mediump float;
-        uniform sampler2D u_texture;
-        uniform float u_globalAlpha;
-        varying vec2 v_texCoord;
+    precision mediump float;
+    uniform sampler2D u_texture;
+    uniform float u_globalAlpha;
+    
+    // Color manipulation uniforms
+    uniform float u_hue;
+    uniform float u_saturation;
+    uniform float u_lightness;
+    uniform float u_brightness;
+    uniform float u_contrast;
+    uniform vec4 u_colorTint;
+    uniform float u_opacity;
+    uniform int u_colorMode;
+    uniform vec4 u_colorMultiply;
+    uniform vec4 u_colorAdd;
+    uniform float u_gamma;
+    uniform float u_exposure;
+    
+    varying vec2 v_texCoord;
+    
+    // Convert RGB to HSL
+    vec3 rgb2hsl(vec3 c) {
+        vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+        vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+        vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
         
-        void main() {
-            gl_FragColor = texture2D(u_texture, v_texCoord);
-            gl_FragColor.a *= u_globalAlpha;
+        float d = q.x - min(q.w, q.y);
+        float e = 1.0e-10;
+        return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+    }
+    
+    // Convert HSL to RGB
+    vec3 hsl2rgb(vec3 c) {
+        vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+        return c.z + c.y * (rgb - 0.5) * (1.0 - abs(2.0 * c.z - 1.0));
+    }
+    
+    // Apply color temperature effect
+    vec3 applyColorTemperature(vec3 color, float temperature) {
+        // Simplified color temperature adjustment
+        float t = temperature * 0.01;
+        vec3 warm = vec3(1.0, 0.8, 0.6);
+        vec3 cool = vec3(0.6, 0.8, 1.0);
+        return mix(color * cool, color * warm, clamp(t + 0.5, 0.0, 1.0));
+    }
+    
+    void main() {
+        vec4 texColor = texture2D(u_texture, v_texCoord);
+        vec3 color = texColor.rgb;
+        float alpha = texColor.a;
+        
+        // Apply gamma correction first if needed
+        if (u_gamma != 1.0) {
+            color = pow(color, vec3(1.0 / u_gamma));
         }
-    `;
+        
+        // Apply exposure
+        if (u_exposure != 0.0) {
+            color *= pow(2.0, u_exposure);
+        }
+        
+        // Apply brightness and contrast
+        if (u_brightness != 0.0 || u_contrast != 1.0) {
+            color += u_brightness;
+            color = (color - 0.5) * u_contrast + 0.5;
+        }
+        
+        // Apply HSL adjustments
+        if (u_hue != 0.0 || u_saturation != 1.0 || u_lightness != 0.0) {
+            vec3 hsl = rgb2hsl(color);
+            
+            // Adjust hue (wrap around)
+            hsl.x = mod(hsl.x + u_hue / 360.0, 1.0);
+            
+            // Adjust saturation
+            hsl.y *= u_saturation;
+            
+            // Adjust lightness
+            hsl.z += u_lightness;
+            
+            // Clamp HSL values
+            hsl = clamp(hsl, vec3(0.0), vec3(1.0));
+            
+            color = hsl2rgb(hsl);
+        }
+        
+        // Apply color modes
+        if (u_colorMode == 1) {
+            // Grayscale
+            float gray = dot(color, vec3(0.299, 0.587, 0.114));
+            color = vec3(gray);
+        } else if (u_colorMode == 2) {
+            // Sepia
+            vec3 sepia = vec3(
+                dot(color, vec3(0.393, 0.769, 0.189)),
+                dot(color, vec3(0.349, 0.686, 0.168)),
+                dot(color, vec3(0.272, 0.534, 0.131))
+            );
+            color = sepia;
+        } else if (u_colorMode == 3) {
+            // Invert
+            color = 1.0 - color;
+        } else if (u_colorMode == 4) {
+            // Black and white (threshold)
+            float gray = dot(color, vec3(0.299, 0.587, 0.114));
+            color = vec3(step(0.5, gray));
+        }
+        
+        // Apply color multiply
+        color *= u_colorMultiply.rgb;
+        alpha *= u_colorMultiply.a;
+        
+        // Apply color addition
+        color += u_colorAdd.rgb;
+        alpha += u_colorAdd.a;
+        
+        // Apply color tint
+        color = mix(color, u_colorTint.rgb, u_colorTint.a);
+        
+        // Apply opacity
+        alpha *= u_opacity;
+        
+        // Clamp final color
+        color = clamp(color, 0.0, 1.0);
+        alpha = clamp(alpha, 0.0, 1.0);
+        
+        gl_FragColor = vec4(color, alpha * u_globalAlpha);
+    }
+`;
 
         this.shaders.batchedRect = this.createShaderProgram(batchedRectVertexShader, batchedFragmentShader);
         this.shaders.batchedCircle = this.createShaderProgram(circleVertexShader, circleFragmentShader);
@@ -1516,7 +1657,7 @@ class WebGLCanvas {
 
         // Handle context lost event
         this.canvas.addEventListener('webglcontextlost', (event) => {
-            console.warn('WebGL context lost');
+            // console.warn('WebGL context lost');
             event.preventDefault(); // This is crucial - prevents default behavior
             this.contextLost = true;
 
@@ -1529,7 +1670,7 @@ class WebGLCanvas {
             // Clear all pending timeouts/intervals
             this.clearAllTimers();
 
-            // Clear all resources
+            // Clear all resources immediately - don't try to delete WebGL objects
             this.clearResourcesOnContextLoss();
 
             // Emit custom event
@@ -1537,14 +1678,14 @@ class WebGLCanvas {
                 try {
                     this.canvas.dispatchEvent(new CustomEvent('contextlost'));
                 } catch (e) {
-                    console.warn('Failed to dispatch contextlost event:', e);
+                    // console.warn('Failed to dispatch contextlost event:', e);
                 }
             }
         }, false);
 
         // Handle context restored event with retry mechanism
         this.canvas.addEventListener('webglcontextrestored', (event) => {
-            console.log('WebGL context restored');
+            // console.log('WebGL context restored');
             this.contextLost = false;
 
             // Add a small delay before restoration to ensure stability
@@ -1573,7 +1714,7 @@ class WebGLCanvas {
                     try {
                         callback();
                     } catch (e) {
-                        console.error('Error in context restore callback:', e);
+                        // console.error('Error in context restore callback:', e);
                     }
                 });
 
@@ -1582,16 +1723,16 @@ class WebGLCanvas {
                     this.canvas.dispatchEvent(new CustomEvent('contextrestored'));
                 }
 
-                console.log('WebGL context successfully restored');
+                // console.log('WebGL context successfully restored');
             } catch (e) {
                 attempts++;
-                console.error(`Context restore attempt ${attempts} failed:`, e);
+                // console.error(`Context restore attempt ${attempts} failed:`, e);
 
                 if (attempts < maxAttempts) {
-                    console.log(`Retrying context restore in ${attempts * 500}ms...`);
+                    // console.log(`Retrying context restore in ${attempts * 500}ms...`);
                     setTimeout(restore, attempts * 500);
                 } else {
-                    console.error('Failed to restore WebGL context after maximum attempts');
+                    // console.error('Failed to restore WebGL context after maximum attempts');
                     this.contextLost = true;
                 }
             }
@@ -1604,14 +1745,23 @@ class WebGLCanvas {
     * Monitor context health during operations
     */
     setupContextMonitoring() {
-        // Check context periodically during heavy operations
+        // Check context periodically but less frequently to reduce overhead
         this.contextHealthCheck = setInterval(() => {
-            if (this.gl && !this.contextLost && this.gl.isContextLost()) {
-                console.warn('Context loss detected during health check');
-                this.contextLost = true;
-                this.clearResourcesOnContextLoss();
+            if (this.gl && !this.contextLost) {
+                try {
+                    if (this.gl.isContextLost()) {
+                        // console.warn('Context loss detected during health check');
+                        this.contextLost = true;
+                        this.clearResourcesOnContextLoss();
+                    }
+                } catch (e) {
+                    // If we can't even call isContextLost, context is definitely lost
+                    // console.warn('Cannot check context health, assuming lost');
+                    this.contextLost = true;
+                    this.clearResourcesOnContextLoss();
+                }
             }
-        }, 5000); // Check every 5 seconds
+        }, 10000); // Check every 10 seconds instead of 5
     }
 
     /*
@@ -1636,7 +1786,7 @@ class WebGLCanvas {
         // Clear shader references (programs are automatically lost)
         this.shaders = {};
 
-        // Reset batch state
+        // Reset batch state without trying to delete buffers
         if (this.batchBuffers) {
             Object.values(this.batchBuffers).forEach(batch => {
                 if (batch) {
@@ -1644,8 +1794,23 @@ class WebGLCanvas {
                     batch.currentIndices = 0;
                     if (batch.currentQuads !== undefined) batch.currentQuads = 0;
                     batch.currentTexture = null;
+                    // Don't try to delete buffers - they're automatically lost
+                    batch.vertices = null;
+                    batch.colors = null;
+                    batch.indices = null;
+                    batch.centers = null;
+                    batch.radii = null;
+                    batch.texCoords = null;
                 }
             });
+        }
+
+        // Clear post-processing resources references
+        if (this.postProcessing) {
+            this.postProcessing.framebuffers = [];
+            this.postProcessing.tempTextures = [];
+            this.postProcessing.quadBuffer = null;
+            this.postProcessing.quadIndexBuffer = null;
         }
 
         // Clear custom buffers
@@ -1659,7 +1824,7 @@ class WebGLCanvas {
      */
     restoreWebGLState() {
         if (!this.gl || this.gl.isContextLost()) {
-            console.error('Cannot restore state - context is still lost');
+            // console.error('Cannot restore state - context is still lost');
             return;
         }
 
@@ -1678,11 +1843,28 @@ class WebGLCanvas {
             this.gl.enable(this.gl.BLEND);
             this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
 
-            console.log('WebGL state restored successfully');
+            // console.log('WebGL state restored successfully');
         } catch (e) {
-            console.error('Failed to restore WebGL state:', e);
+            // console.error('Failed to restore WebGL state:', e);
             this.contextLost = true; // Keep marked as lost if restore fails
             throw e;
+        }
+    }
+
+    /*
+ * Periodic texture cache cleanup
+ */
+    cleanupTextureCache() {
+        const now = performance.now();
+        const maxAge = 30000; // 30 seconds
+
+        for (const [image, data] of this.textureCache.entries()) {
+            if (now - data.lastUsed > maxAge) {
+                if (data.atlas === null && this.gl.isTexture(data.texture)) {
+                    this.gl.deleteTexture(data.texture);
+                }
+                this.textureCache.delete(image);
+            }
         }
     }
 
@@ -1701,23 +1883,34 @@ class WebGLCanvas {
         return this.contextLost || (this.gl && this.gl.isContextLost());
     }
 
+    isFramebufferValid(framebuffer) {
+        return framebuffer &&
+            this.gl.isFramebuffer(framebuffer) &&
+            this.gl.getFramebufferAttachmentParameter(
+                this.gl.FRAMEBUFFER,
+                this.gl.COLOR_ATTACHMENT0,
+                this.gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME
+            ) !== null;
+    }
+
     /*
      * Flush all batches to GPU
      */
     flush() {
-        if (this.isContextLost()) {
-            console.warn('Skipping flush - WebGL context is lost');
-            return;
-        }
-
-        if (!this.gl) {
-            console.warn('Skipping flush - WebGL context not available');
+        if (this.isContextLost() || !this.gl) {
+            //// console.warn('Skipping flush - WebGL context is lost/unavailable');
             return;
         }
 
         try {
             // If post-processing is enabled, render to framebuffer first
             if (this.postProcessing.enabled && this.postProcessing.effects.length > 0) {
+                // Only recreate if truly invalid - not every frame!
+                if (!this.isFramebufferValid(this.postProcessing.framebuffers[0])) {
+                    // console.warn('Recreating invalid framebuffers');
+                    this.createPostProcessingFramebuffers();
+                }
+
                 // Bind first framebuffer for scene rendering
                 this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.postProcessing.framebuffers[0]);
                 this.gl.viewport(0, 0, this.width, this.height);
@@ -1740,15 +1933,74 @@ class WebGLCanvas {
                 this.flushLines();
                 this.flushImages();
             }
-
         } catch (e) {
             if (this.gl && this.gl.isContextLost()) {
-                console.warn('Context lost during flush operation');
+                // console.warn('Context lost during flush operation');
                 this.contextLost = true;
+                this.clearResourcesOnContextLoss();
             } else {
-                console.error('Error during flush:', e);
+                // console.error('Error during flush:', e);
             }
         }
+    }
+
+    /*
+ * Ultra-fast image batch flushing
+ */
+    flushImageBatch() {
+        const batch = this.imageBatchBuffer;
+        if (batch.currentQuads === 0 || !batch.currentTexture) return;
+
+        const gl = this.gl;
+        const program = this.shaders.instancedImage;
+
+        gl.useProgram(program);
+
+        // Bind texture once
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, batch.currentTexture);
+        gl.uniform1i(gl.getUniformLocation(program, 'u_texture'), 0);
+
+        // Set uniforms
+        gl.uniform2f(gl.getUniformLocation(program, 'u_resolution'), this.width, this.height);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_globalAlpha'), this.state.globalAlpha);
+        gl.uniformMatrix3fv(gl.getUniformLocation(program, 'u_globalTransform'), false, this.state.transform);
+
+        // Upload vertex data (only current portion)
+        const vertexCount = batch.currentQuads * 8;
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, vertexCount), gl.DYNAMIC_DRAW);
+
+        const positionLoc = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Upload texture coordinate data
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.texCoords);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.texCoordData.subarray(0, vertexCount), gl.DYNAMIC_DRAW);
+
+        const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
+        gl.enableVertexAttribArray(texCoordLoc);
+        gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Upload transform data
+        const transformCount = batch.currentQuads * 6;
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.transforms);
+        gl.bufferData(gl.ARRAY_BUFFER, batch.transformData.subarray(0, transformCount), gl.DYNAMIC_DRAW);
+
+        const transformLoc = gl.getAttribLocation(program, 'a_transform');
+        gl.enableVertexAttribArray(transformLoc);
+        gl.vertexAttribPointer(transformLoc, 6, gl.FLOAT, false, 0, 0);
+
+        // Use pre-generated indices
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
+
+        // Draw all quads in one call
+        gl.drawElements(gl.TRIANGLES, batch.currentQuads * 6, gl.UNSIGNED_SHORT, 0);
+
+        // Reset batch
+        batch.currentQuads = 0;
+        batch.currentTexture = null;
     }
 
     /*
@@ -1767,12 +2019,10 @@ class WebGLCanvas {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, batch.currentTexture);
 
-        // Set texture uniform - check if it exists
+        // Set texture uniform
         const textureLocation = gl.getUniformLocation(program, 'u_texture');
         if (textureLocation !== null) {
             gl.uniform1i(textureLocation, 0);
-        } else {
-            //console.warn('u_texture uniform not found in image shader, but continuing...');
         }
 
         // Upload and bind vertex data
@@ -1783,9 +2033,6 @@ class WebGLCanvas {
         if (positionLoc >= 0) {
             gl.enableVertexAttribArray(positionLoc);
             gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
-        } else {
-            //console.error('Required attribute a_position not found in image shader');
-            return;
         }
 
         // Upload and bind texture coordinate data
@@ -1796,16 +2043,13 @@ class WebGLCanvas {
         if (texCoordLoc >= 0) {
             gl.enableVertexAttribArray(texCoordLoc);
             gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
-        } else {
-            //console.error('Required attribute a_texCoord not found in image shader');
-            return;
         }
 
         // Upload and bind index data
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.indexData.subarray(0, batch.currentIndices), gl.DYNAMIC_DRAW);
 
-        // Set uniforms
+        // Set basic uniforms
         const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
         if (resolutionLoc !== null) {
             gl.uniform2f(resolutionLoc, this.width, this.height);
@@ -1814,6 +2058,67 @@ class WebGLCanvas {
         const globalAlphaLoc = gl.getUniformLocation(program, 'u_globalAlpha');
         if (globalAlphaLoc !== null) {
             gl.uniform1f(globalAlphaLoc, this.state.globalAlpha);
+        }
+
+        // Set color manipulation uniforms
+        const hueLocation = gl.getUniformLocation(program, 'u_hue');
+        if (hueLocation !== null) {
+            gl.uniform1f(hueLocation, this.state.imageHue);
+        }
+
+        const saturationLocation = gl.getUniformLocation(program, 'u_saturation');
+        if (saturationLocation !== null) {
+            gl.uniform1f(saturationLocation, this.state.imageSaturation);
+        }
+
+        const lightnessLocation = gl.getUniformLocation(program, 'u_lightness');
+        if (lightnessLocation !== null) {
+            gl.uniform1f(lightnessLocation, this.state.imageLightness);
+        }
+
+        const brightnessLocation = gl.getUniformLocation(program, 'u_brightness');
+        if (brightnessLocation !== null) {
+            gl.uniform1f(brightnessLocation, this.state.imageBrightness);
+        }
+
+        const contrastLocation = gl.getUniformLocation(program, 'u_contrast');
+        if (contrastLocation !== null) {
+            gl.uniform1f(contrastLocation, this.state.imageContrast);
+        }
+
+        const colorTintLocation = gl.getUniformLocation(program, 'u_colorTint');
+        if (colorTintLocation !== null) {
+            gl.uniform4fv(colorTintLocation, this.state.imageColorTint);
+        }
+
+        const opacityLocation = gl.getUniformLocation(program, 'u_opacity');
+        if (opacityLocation !== null) {
+            gl.uniform1f(opacityLocation, this.state.imageOpacity);
+        }
+
+        const colorModeLocation = gl.getUniformLocation(program, 'u_colorMode');
+        if (colorModeLocation !== null) {
+            gl.uniform1i(colorModeLocation, this.state.imageColorMode);
+        }
+
+        const colorMultiplyLocation = gl.getUniformLocation(program, 'u_colorMultiply');
+        if (colorMultiplyLocation !== null) {
+            gl.uniform4fv(colorMultiplyLocation, this.state.imageColorMultiply);
+        }
+
+        const colorAddLocation = gl.getUniformLocation(program, 'u_colorAdd');
+        if (colorAddLocation !== null) {
+            gl.uniform4fv(colorAddLocation, this.state.imageColorAdd);
+        }
+
+        const gammaLocation = gl.getUniformLocation(program, 'u_gamma');
+        if (gammaLocation !== null) {
+            gl.uniform1f(gammaLocation, this.state.imageGamma);
+        }
+
+        const exposureLocation = gl.getUniformLocation(program, 'u_exposure');
+        if (exposureLocation !== null) {
+            gl.uniform1f(exposureLocation, this.state.imageExposure);
         }
 
         // Draw all batched quads in one call
@@ -1975,6 +2280,15 @@ class WebGLCanvas {
         const gl = this.gl;
         const program = this.shaders.batchedCircle;
 
+        // Check if program exists and is valid
+        if (!program || !gl.isProgram(program)) {
+            // console.error('Circle shader program not available or invalid');
+            // Reset batch to prevent infinite loop
+            batch.currentVertices = 0;
+            batch.currentIndices = 0;
+            return;
+        }
+
         gl.useProgram(program);
 
         // Upload vertex data
@@ -1982,32 +2296,40 @@ class WebGLCanvas {
         gl.bufferData(gl.ARRAY_BUFFER, batch.vertexData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
 
         const positionLoc = gl.getAttribLocation(program, 'a_position');
-        gl.enableVertexAttribArray(positionLoc);
-        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        if (positionLoc >= 0) {
+            gl.enableVertexAttribArray(positionLoc);
+            gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+        }
 
         // Upload color data
         gl.bindBuffer(gl.ARRAY_BUFFER, batch.colors);
         gl.bufferData(gl.ARRAY_BUFFER, batch.colorData.subarray(0, batch.currentVertices * 4), gl.DYNAMIC_DRAW);
 
         const colorLoc = gl.getAttribLocation(program, 'a_color');
-        gl.enableVertexAttribArray(colorLoc);
-        gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 0, 0);
+        if (colorLoc >= 0) {
+            gl.enableVertexAttribArray(colorLoc);
+            gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 0, 0);
+        }
 
         // Upload center data
         gl.bindBuffer(gl.ARRAY_BUFFER, batch.centers);
         gl.bufferData(gl.ARRAY_BUFFER, batch.centerData.subarray(0, batch.currentVertices * 2), gl.DYNAMIC_DRAW);
 
         const centerLoc = gl.getAttribLocation(program, 'a_center');
-        gl.enableVertexAttribArray(centerLoc);
-        gl.vertexAttribPointer(centerLoc, 2, gl.FLOAT, false, 0, 0);
+        if (centerLoc >= 0) {
+            gl.enableVertexAttribArray(centerLoc);
+            gl.vertexAttribPointer(centerLoc, 2, gl.FLOAT, false, 0, 0);
+        }
 
         // Upload radius data
         gl.bindBuffer(gl.ARRAY_BUFFER, batch.radii);
         gl.bufferData(gl.ARRAY_BUFFER, batch.radiusData.subarray(0, batch.currentVertices), gl.DYNAMIC_DRAW);
 
         const radiusLoc = gl.getAttribLocation(program, 'a_radius');
-        gl.enableVertexAttribArray(radiusLoc);
-        gl.vertexAttribPointer(radiusLoc, 1, gl.FLOAT, false, 0, 0);
+        if (radiusLoc >= 0) {
+            gl.enableVertexAttribArray(radiusLoc);
+            gl.vertexAttribPointer(radiusLoc, 1, gl.FLOAT, false, 0, 0);
+        }
 
         // Upload index data
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
@@ -2015,7 +2337,9 @@ class WebGLCanvas {
 
         // Set uniforms
         const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-        gl.uniform2f(resolutionLoc, this.width, this.height);
+        if (resolutionLoc !== null) {
+            gl.uniform2f(resolutionLoc, this.width, this.height);
+        }
 
         // Add stroke uniforms
         const strokeWidthLoc = gl.getUniformLocation(program, 'u_strokeWidth');
@@ -2036,6 +2360,10 @@ class WebGLCanvas {
         // Reset batch after flushing
         batch.currentVertices = 0;
         batch.currentIndices = 0;
+
+        // Clean up
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
     }
 
     /*
@@ -2149,7 +2477,7 @@ class WebGLCanvas {
                 this.gl.lineWidth(width);
             } catch (e) {
                 // Some browsers/drivers don't support this
-                console.warn('WebGL lineWidth not supported, using rectangle-based rendering');
+                // console.warn('WebGL lineWidth not supported, using rectangle-based rendering');
             }
         }
     }
@@ -2340,6 +2668,239 @@ class WebGLCanvas {
 
     get lineDashOffset() {
         return this.state.lineDashOffset;
+    }
+
+    // HSL Properties
+    set imageHue(hue) {
+        this.state.imageHue = Math.max(-180, Math.min(180, hue));
+    }
+
+    get imageHue() {
+        return this.state.imageHue;
+    }
+
+    set imageSaturation(saturation) {
+        this.state.imageSaturation = Math.max(0, saturation);
+    }
+
+    get imageSaturation() {
+        return this.state.imageSaturation;
+    }
+
+    set imageLightness(lightness) {
+        this.state.imageLightness = Math.max(-1, Math.min(1, lightness));
+    }
+
+    get imageLightness() {
+        return this.state.imageLightness;
+    }
+
+    // Brightness/Contrast
+    set imageBrightness(brightness) {
+        this.state.imageBrightness = Math.max(-1, Math.min(1, brightness));
+    }
+
+    get imageBrightness() {
+        return this.state.imageBrightness;
+    }
+
+    set imageContrast(contrast) {
+        this.state.imageContrast = Math.max(0, contrast);
+    }
+
+    get imageContrast() {
+        return this.state.imageContrast;
+    }
+
+    // Opacity (separate from globalAlpha)
+    set imageOpacity(opacity) {
+        this.state.imageOpacity = Math.max(0, Math.min(1, opacity));
+    }
+
+    get imageOpacity() {
+        return this.state.imageOpacity;
+    }
+
+    // Color tint
+    set imageColorTint(color) {
+        if (Array.isArray(color)) {
+            this.state.imageColorTint = [...color];
+        } else {
+            this.state.imageColorTint = this.parseColor(color);
+        }
+    }
+
+    get imageColorTint() {
+        return [...this.state.imageColorTint];
+    }
+
+    // Color mode
+    set imageColorMode(mode) {
+        this.state.imageColorMode = Math.max(0, Math.min(4, Math.floor(mode)));
+    }
+
+    get imageColorMode() {
+        return this.state.imageColorMode;
+    }
+
+    // Color multiply
+    set imageColorMultiply(color) {
+        if (Array.isArray(color)) {
+            this.state.imageColorMultiply = [...color];
+        } else {
+            this.state.imageColorMultiply = this.parseColor(color);
+        }
+    }
+
+    get imageColorMultiply() {
+        return [...this.state.imageColorMultiply];
+    }
+
+    // Color add
+    set imageColorAdd(color) {
+        if (Array.isArray(color)) {
+            this.state.imageColorAdd = [...color];
+        } else {
+            this.state.imageColorAdd = this.parseColor(color);
+        }
+    }
+
+    get imageColorAdd() {
+        return [...this.state.imageColorAdd];
+    }
+
+    // Gamma correction
+    set imageGamma(gamma) {
+        this.state.imageGamma = Math.max(0.1, Math.min(3, gamma));
+    }
+
+    get imageGamma() {
+        return this.state.imageGamma;
+    }
+
+    // Exposure
+    set imageExposure(exposure) {
+        this.state.imageExposure = Math.max(-3, Math.min(3, exposure));
+    }
+
+    get imageExposure() {
+        return this.state.imageExposure;
+    }
+
+    /*
+     * Convenience methods for common image color effects
+     */
+
+    // Reset all image color properties to default
+    resetImageColors() {
+        this.state.imageHue = 0;
+        this.state.imageSaturation = 1;
+        this.state.imageLightness = 0;
+        this.state.imageBrightness = 0;
+        this.state.imageContrast = 1;
+        this.state.imageOpacity = 1;
+        this.state.imageColorTint = [0, 0, 0, 0];
+        this.state.imageColorMode = 0;
+        this.state.imageColorMultiply = [1, 1, 1, 1];
+        this.state.imageColorAdd = [0, 0, 0, 0];
+        this.state.imageGamma = 1;
+        this.state.imageExposure = 0;
+    }
+
+    // Apply a color filter preset
+    applyImageFilter(filterName, intensity = 1.0) {
+        this.resetImageColors();
+
+        switch (filterName.toLowerCase()) {
+            case 'grayscale':
+            case 'greyscale':
+                this.imageColorMode = 1;
+                break;
+
+            case 'sepia':
+                this.imageColorMode = 2;
+                break;
+
+            case 'invert':
+            case 'negative':
+                this.imageColorMode = 3;
+                break;
+
+            case 'blackwhite':
+            case 'threshold':
+                this.imageColorMode = 4;
+                break;
+
+            case 'vintage':
+                this.imageHue = 30 * intensity;
+                this.imageSaturation = 0.7;
+                this.imageContrast = 1.2;
+                this.imageColorTint = [0.9, 0.8, 0.6, 0.1 * intensity];
+                break;
+
+            case 'cold':
+                this.imageColorTint = [0.6, 0.8, 1.0, 0.2 * intensity];
+                break;
+
+            case 'warm':
+                this.imageColorTint = [1.0, 0.8, 0.6, 0.2 * intensity];
+                break;
+
+            case 'dramatic':
+                this.imageContrast = 1.5;
+                this.imageSaturation = 1.3;
+                this.imageBrightness = -0.1;
+                break;
+
+            case 'fade':
+                this.imageOpacity = 0.7 * intensity;
+                this.imageContrast = 0.8;
+                break;
+
+            case 'bright':
+                this.imageBrightness = 0.3 * intensity;
+                this.imageExposure = 0.5 * intensity;
+                break;
+
+            case 'dark':
+                this.imageBrightness = -0.3 * intensity;
+                this.imageExposure = -0.5 * intensity;
+                break;
+        }
+    }
+
+    // Batch set multiple image properties
+    setImageColors(options) {
+        if (options.hue !== undefined) this.imageHue = options.hue;
+        if (options.saturation !== undefined) this.imageSaturation = options.saturation;
+        if (options.lightness !== undefined) this.imageLightness = options.lightness;
+        if (options.brightness !== undefined) this.imageBrightness = options.brightness;
+        if (options.contrast !== undefined) this.imageContrast = options.contrast;
+        if (options.opacity !== undefined) this.imageOpacity = options.opacity;
+        if (options.tint !== undefined) this.imageColorTint = options.tint;
+        if (options.mode !== undefined) this.imageColorMode = options.mode;
+        if (options.multiply !== undefined) this.imageColorMultiply = options.multiply;
+        if (options.add !== undefined) this.imageColorAdd = options.add;
+        if (options.gamma !== undefined) this.imageGamma = options.gamma;
+        if (options.exposure !== undefined) this.imageExposure = options.exposure;
+    }
+
+    // Get current image color settings
+    getImageColors() {
+        return {
+            hue: this.state.imageHue,
+            saturation: this.state.imageSaturation,
+            lightness: this.state.imageLightness,
+            brightness: this.state.imageBrightness,
+            contrast: this.state.imageContrast,
+            opacity: this.state.imageOpacity,
+            tint: [...this.state.imageColorTint],
+            mode: this.state.imageColorMode,
+            multiply: [...this.state.imageColorMultiply],
+            add: [...this.state.imageColorAdd],
+            gamma: this.state.imageGamma,
+            exposure: this.state.imageExposure
+        };
     }
 
     /*
@@ -2680,7 +3241,21 @@ class WebGLCanvas {
             shadowOffsetX: this.state.shadowOffsetX,
             shadowOffsetY: this.state.shadowOffsetY,
             imageSmoothingEnabled: this.state.imageSmoothingEnabled,
-            transform: [...this.state.transform]
+            transform: [...this.state.transform],
+
+            // Image color properties
+            imageHue: this.state.imageHue,
+            imageSaturation: this.state.imageSaturation,
+            imageLightness: this.state.imageLightness,
+            imageBrightness: this.state.imageBrightness,
+            imageContrast: this.state.imageContrast,
+            imageOpacity: this.state.imageOpacity,
+            imageColorTint: [...this.state.imageColorTint],
+            imageColorMode: this.state.imageColorMode,
+            imageColorMultiply: [...this.state.imageColorMultiply],
+            imageColorAdd: [...this.state.imageColorAdd],
+            imageGamma: this.state.imageGamma,
+            imageExposure: this.state.imageExposure
         });
     }
 
@@ -2973,7 +3548,7 @@ class WebGLCanvas {
     addImageToBatch(texture, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight) {
         const batch = this.batchBuffers.images;
 
-        // If this is a different texture than current batch, flush first
+        // If different texture, flush current batch
         if (batch.currentTexture && batch.currentTexture !== texture) {
             this.flushImages();
         }
@@ -2983,113 +3558,351 @@ class WebGLCanvas {
             this.flushImages();
         }
 
-        // Set current texture for this batch
         batch.currentTexture = texture;
 
-        // Transform destination vertices
+        // Transform rectangle vertices
         const [x1, y1] = this.transformPoint(dx, dy);
         const [x2, y2] = this.transformPoint(dx + dWidth, dy);
         const [x3, y3] = this.transformPoint(dx, dy + dHeight);
         const [x4, y4] = this.transformPoint(dx + dWidth, dy + dHeight);
 
-        // Calculate texture coordinates
-        const imageWidth = texture.width || 1;
-        const imageHeight = texture.height || 1;
-        const u1 = sx / imageWidth;
-        const v1 = 1.0 - (sy / imageHeight); // Flip V coordinate
-        const u2 = (sx + sWidth) / imageWidth;
-        const v2 = 1.0 - ((sy + sHeight) / imageHeight); // Flip V coordinate
-
         const vertexIndex = batch.currentVertices;
         const quadIndex = batch.currentQuads;
 
-        // Add vertices for this quad (bottom-left, bottom-right, top-left, top-right)
-        batch.vertexData[vertexIndex * 2 + 0] = x1; batch.vertexData[vertexIndex * 2 + 1] = y1;   // Bottom-left
-        batch.vertexData[vertexIndex * 2 + 2] = x2; batch.vertexData[vertexIndex * 2 + 3] = y2;   // Bottom-right  
-        batch.vertexData[vertexIndex * 2 + 4] = x3; batch.vertexData[vertexIndex * 2 + 5] = y3;   // Top-left
-        batch.vertexData[vertexIndex * 2 + 6] = x4; batch.vertexData[vertexIndex * 2 + 7] = y4;   // Top-right
+        // Add vertices
+        batch.vertexData[vertexIndex * 2 + 0] = x1;
+        batch.vertexData[vertexIndex * 2 + 1] = y1;
+        batch.vertexData[vertexIndex * 2 + 2] = x2;
+        batch.vertexData[vertexIndex * 2 + 3] = y2;
+        batch.vertexData[vertexIndex * 2 + 4] = x3;
+        batch.vertexData[vertexIndex * 2 + 5] = y3;
+        batch.vertexData[vertexIndex * 2 + 6] = x4;
+        batch.vertexData[vertexIndex * 2 + 7] = y4;
+
+        // Calculate texture coordinates (assuming full texture for now)
+        const imgWidth = texture.width || sWidth || dWidth;
+        const imgHeight = texture.height || sHeight || dHeight;
+
+        const u1 = sx / imgWidth;
+        const v1 = 1.0 - (sy + sHeight) / imgHeight; // Flip Y
+        const u2 = (sx + sWidth) / imgWidth;
+        const v2 = 1.0 - sy / imgHeight; // Flip Y
 
         // Add texture coordinates
-        batch.texCoordData[vertexIndex * 2 + 0] = u1; batch.texCoordData[vertexIndex * 2 + 1] = v2;   // Bottom-left
-        batch.texCoordData[vertexIndex * 2 + 2] = u2; batch.texCoordData[vertexIndex * 2 + 3] = v2;   // Bottom-right
-        batch.texCoordData[vertexIndex * 2 + 4] = u1; batch.texCoordData[vertexIndex * 2 + 5] = v1;   // Top-left
-        batch.texCoordData[vertexIndex * 2 + 6] = u2; batch.texCoordData[vertexIndex * 2 + 7] = v1;   // Top-right
+        batch.texCoordData[vertexIndex * 2 + 0] = u1; batch.texCoordData[vertexIndex * 2 + 1] = v2; // TL
+        batch.texCoordData[vertexIndex * 2 + 2] = u2; batch.texCoordData[vertexIndex * 2 + 3] = v2; // TR
+        batch.texCoordData[vertexIndex * 2 + 4] = u1; batch.texCoordData[vertexIndex * 2 + 5] = v1; // BL
+        batch.texCoordData[vertexIndex * 2 + 6] = u2; batch.texCoordData[vertexIndex * 2 + 7] = v1; // BR
 
-        // Add indices for this quad (two triangles)
+        // Add indices (two triangles)
         const indexBase = batch.currentVertices;
         const indexOffset = batch.currentIndices;
-        batch.indexData[indexOffset + 0] = indexBase + 0; // First triangle
+        batch.indexData[indexOffset + 0] = indexBase + 0;
         batch.indexData[indexOffset + 1] = indexBase + 1;
         batch.indexData[indexOffset + 2] = indexBase + 2;
-        batch.indexData[indexOffset + 3] = indexBase + 1; // Second triangle
-        batch.indexData[indexOffset + 4] = indexBase + 3;
-        batch.indexData[indexOffset + 5] = indexBase + 2;
+        batch.indexData[indexOffset + 3] = indexBase + 1;
+        batch.indexData[indexOffset + 4] = indexBase + 2;
+        batch.indexData[indexOffset + 5] = indexBase + 3;
 
-        // Update counters
         batch.currentVertices += 4;
         batch.currentIndices += 6;
         batch.currentQuads += 1;
     }
 
     /*
-     * Get or create texture from image
+    * Enhanced image batch system with texture atlas support
+    */
+    createImageBatchSystem() {
+        // Create texture atlas for small images
+        this.textureAtlas = {
+            canvas: document.createElement('canvas'),
+            ctx: null,
+            width: 2048,
+            height: 2048,
+            regions: new Map(),
+            currentX: 0,
+            currentY: 0,
+            rowHeight: 0,
+            needsUpdate: false
+        };
+
+        this.textureAtlas.canvas.width = this.textureAtlas.width;
+        this.textureAtlas.canvas.height = this.textureAtlas.height;
+        this.textureAtlas.ctx = this.textureAtlas.canvas.getContext('2d');
+
+        // Create atlas texture
+        this.atlasTexture = null;
+
+        // Improved batch buffer for images
+        const gl = this.gl;
+        const maxQuads = 5000; // Reduced for better stability
+
+        this.imageBatchBuffer = {
+            vertices: gl.createBuffer(),
+            texCoords: gl.createBuffer(),
+            indices: gl.createBuffer(),
+            transformPos: gl.createBuffer(),    // Position transforms
+            transformScale: gl.createBuffer(),  // Scale transforms
+            transformRot: gl.createBuffer(),    // Rotation transforms
+            transformAlpha: gl.createBuffer(),  // Alpha transforms
+
+            maxQuads,
+            currentQuads: 0,
+
+            // Use typed arrays for better performance
+            vertexData: new Float32Array(maxQuads * 8),     // 4 vertices * 2 coords
+            texCoordData: new Float32Array(maxQuads * 8),   // 4 vertices * 2 tex coords
+            indexData: new Uint16Array(maxQuads * 6),       // 2 triangles * 3 indices
+            transformPosData: new Float32Array(maxQuads * 8),    // 4 vertices * 2 pos
+            transformScaleData: new Float32Array(maxQuads * 8),  // 4 vertices * 2 scale
+            transformRotData: new Float32Array(maxQuads * 4),    // 4 vertices * 1 rotation
+            transformAlphaData: new Float32Array(maxQuads * 4),  // 4 vertices * 1 alpha
+
+            currentTexture: null,
+            textureCache: new Map(),
+
+            // Pre-generate indices for better performance
+            indicesGenerated: false
+        };
+
+        // Pre-generate all indices once
+        this.preGenerateIndices();
+
+        // Create instanced rendering shader
+        this.createInstancedImageShader();
+    }
+
+    /*
+     * Pre-generate indices for all possible quads
      */
-    getOrCreateTexture(image) {
-        // Check for context loss first
-        if (this.isContextLost()) {
-            console.warn('Cannot create texture - context is lost');
+    preGenerateIndices() {
+        const batch = this.imageBatchBuffer;
+
+        for (let i = 0; i < batch.maxQuads; i++) {
+            const vertexIndex = i * 4;
+            const indexOffset = i * 6;
+
+            // First triangle
+            batch.indexData[indexOffset + 0] = vertexIndex + 0;
+            batch.indexData[indexOffset + 1] = vertexIndex + 1;
+            batch.indexData[indexOffset + 2] = vertexIndex + 2;
+
+            // Second triangle
+            batch.indexData[indexOffset + 3] = vertexIndex + 1;
+            batch.indexData[indexOffset + 4] = vertexIndex + 3;
+            batch.indexData[indexOffset + 5] = vertexIndex + 2;
+        }
+
+        // Upload indices once
+        const gl = this.gl;
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, batch.indices);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, batch.indexData, gl.STATIC_DRAW);
+
+        batch.indicesGenerated = true;
+    }
+
+    /*
+     * Create instanced image shader for better performance
+     */
+    createInstancedImageShader() {
+        const vertexShader = `
+    precision highp float;
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    attribute vec2 a_transformPos;    // x, y position
+    attribute vec2 a_transformScale;  // scaleX, scaleY
+    attribute float a_transformRot;   // rotation
+    attribute float a_transformAlpha; // alpha
+    
+    uniform vec2 u_resolution;
+    uniform mat3 u_globalTransform;
+    
+    varying vec2 v_texCoord;
+    varying float v_alpha;
+    
+    void main() {
+        // Extract transform components
+        vec2 position = a_transformPos;
+        vec2 scale = a_transformScale;
+        float rotation = a_transformRot;
+        v_alpha = a_transformAlpha;
+        
+        // Apply local transform
+        vec2 rotatedPos = a_position;
+        if (rotation != 0.0) {
+            float cos_r = cos(rotation);
+            float sin_r = sin(rotation);
+            rotatedPos = vec2(
+                a_position.x * cos_r - a_position.y * sin_r,
+                a_position.x * sin_r + a_position.y * cos_r
+            );
+        }
+        
+        vec2 scaledPos = rotatedPos * scale + position;
+        
+        // Apply global transform
+        vec3 transformed = u_globalTransform * vec3(scaledPos, 1.0);
+        
+        // Convert to clip space
+        vec2 clipSpace = (transformed.xy / u_resolution) * 2.0 - 1.0;
+        clipSpace.y = -clipSpace.y;
+        
+        gl_Position = vec4(clipSpace, 0.0, 1.0);
+        v_texCoord = a_texCoord;
+    }
+`;
+
+        const fragmentShader = `
+    precision mediump float;
+    uniform sampler2D u_texture;
+    uniform float u_globalAlpha;
+    
+    varying vec2 v_texCoord;
+    varying float v_alpha;
+    
+    void main() {
+        vec4 texColor = texture2D(u_texture, v_texCoord);
+        gl_FragColor = vec4(texColor.rgb, texColor.a * v_alpha * u_globalAlpha);
+    }
+`;
+
+        this.shaders.instancedImage = this.createShaderProgram(vertexShader, fragmentShader);
+    }
+
+    /*
+     * Add image to texture atlas for small images
+     */
+    addToTextureAtlas(image) {
+        const atlas = this.textureAtlas;
+        const maxSize = 256; // Only atlas images smaller than this
+
+        // Check if image is too large for atlas
+        if (image.width > maxSize || image.height > maxSize) {
             return null;
         }
 
+        // Check if already in atlas
+        if (atlas.regions.has(image)) {
+            return atlas.regions.get(image);
+        }
+
+        // Check if there's space
+        if (atlas.currentX + image.width > atlas.width) {
+            // Move to next row
+            atlas.currentX = 0;
+            atlas.currentY += atlas.rowHeight;
+            atlas.rowHeight = 0;
+        }
+
+        if (atlas.currentY + image.height > atlas.height) {
+            // Atlas is full
+            return null;
+        }
+
+        // Add image to atlas
+        const region = {
+            x: atlas.currentX,
+            y: atlas.currentY,
+            width: image.width,
+            height: image.height,
+            u1: atlas.currentX / atlas.width,
+            v1: atlas.currentY / atlas.height,
+            u2: (atlas.currentX + image.width) / atlas.width,
+            v2: (atlas.currentY + image.height) / atlas.height
+        };
+
+        atlas.ctx.drawImage(image, atlas.currentX, atlas.currentY);
+        atlas.regions.set(image, region);
+        atlas.needsUpdate = true;
+
+        // Update position
+        atlas.currentX += image.width;
+        atlas.rowHeight = Math.max(atlas.rowHeight, image.height);
+
+        return region;
+    }
+
+    /*
+     * Update atlas texture
+     */
+    updateAtlasTexture() {
+        const atlas = this.textureAtlas;
+        if (!atlas.needsUpdate) return;
+
+        if (!this.atlasTexture) {
+            this.atlasTexture = this.gl.createTexture();
+        }
+
+        const gl = this.gl;
+        gl.bindTexture(gl.TEXTURE_2D, this.atlasTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas.canvas);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        atlas.needsUpdate = false;
+    }
+
+    /*
+     * Get or create texture from image
+     */
+    getOrCreateTexture(image) {
+        // Check cache first
         if (this.textureCache.has(image)) {
-            const texture = this.textureCache.get(image);
-            // Verify texture is still valid
-            if (this.gl.isTexture(texture)) {
-                return texture;
-            } else {
-                // Remove invalid texture from cache
-                this.textureCache.delete(image);
+            const cached = this.textureCache.get(image);
+            if (this.gl.isTexture(cached.texture || cached)) {
+                if (cached.lastUsed !== undefined) {
+                    cached.lastUsed = performance.now();
+                }
+                return cached.texture || cached;
+            }
+            // Remove invalid texture
+            this.textureCache.delete(image);
+        }
+
+        // Try to add to atlas first (for small images) - only if atlas is available
+        if (this.textureAtlas) {
+            const atlasRegion = this.addToTextureAtlas(image);
+            if (atlasRegion) {
+                this.updateAtlasTexture();
+                this.textureCache.set(image, {
+                    texture: this.atlasTexture,
+                    atlas: atlasRegion,
+                    lastUsed: performance.now()
+                });
+                return this.atlasTexture;
             }
         }
 
-        // More aggressive texture cache management
-        if (this.textureCache.size > 50) { // Reduced from 100
-            console.warn('Texture cache getting large, cleaning up...');
-            this.cleanupOldTextures();
-        }
-
+        // Create individual texture for large images
         return this.safeWebGLOperation(() => {
             const gl = this.gl;
             const texture = gl.createTexture();
 
-            if (!texture) {
-                throw new Error('Failed to create texture');
-            }
-
             gl.bindTexture(gl.TEXTURE_2D, texture);
 
-            // Set texture parameters
+            // Use more efficient texture parameters
+            const smoothing = this.state.imageSmoothingEnabled;
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, smoothing ? gl.LINEAR : gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, smoothing ? gl.LINEAR : gl.NEAREST);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-            if (this.state.imageSmoothingEnabled) {
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            } else {
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-            }
-
-            // Upload image data
+            // Use efficient texture upload
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
 
-            // Store dimensions on texture for easy access
-            texture.width = image.width || image.videoWidth || image.naturalWidth;
-            texture.height = image.height || image.videoHeight || image.naturalHeight;
+            // Cache with metadata
+            this.textureCache.set(image, {
+                texture: texture,
+                width: image.width || image.videoWidth || image.naturalWidth,
+                height: image.height || image.videoHeight || image.naturalHeight,
+                lastUsed: performance.now(),
+                atlas: null
+            });
 
-            this.textureCache.set(image, texture);
             return texture;
-        }, 'texture creation');
+        }, 'optimized texture creation');
     }
 
     /*
@@ -3113,7 +3926,7 @@ class WebGLCanvas {
             this.textureCache.delete(image);
         });
 
-        console.log(`Cleaned up ${toDelete.length} old textures`);
+        // console.log(`Cleaned up ${toDelete.length} old textures`);
     }
 
     /*
@@ -3131,7 +3944,7 @@ class WebGLCanvas {
     drawImage(image, ...args) {
         // Check if image is loaded
         if (!image || !image.complete || image.naturalWidth === 0) {
-            //console.warn('Image not loaded or invalid');
+            //// console.warn('Image not loaded or invalid');
             return;
         }
 
@@ -4933,7 +5746,7 @@ class WebGLCanvas {
         // Full implementation would require stencil buffer or scissor test
         if (this.currentPath.length > 0) {
             this.state.clipPath = [...this.currentPath];
-            console.warn('clip() is partially implemented - full clipping requires stencil buffer');
+            // console.warn('clip() is partially implemented - full clipping requires stencil buffer');
         }
     }
 
@@ -4986,7 +5799,7 @@ class WebGLCanvas {
 
             return program;
         } catch (error) {
-            console.error(`Failed to create shader "${name}":`, error);
+            // console.error(`Failed to create shader "${name}":`, error);
             throw error;
         }
     }
@@ -5012,7 +5825,7 @@ class WebGLCanvas {
  */
     drawWithShader(shaderName, vertices, indices = null, uniforms = {}, attributes = {}) {
         if (this.isContextLost()) {
-            console.warn('Skipping drawWithShader - WebGL context is lost');
+            // console.warn('Skipping drawWithShader - WebGL context is lost');
             return;
         }
 
@@ -5022,7 +5835,7 @@ class WebGLCanvas {
 
             // Check if program is valid
             if (!program || !gl.isProgram(program)) {
-                console.error(`Invalid shader program: ${shaderName}`);
+                // console.error(`Invalid shader program: ${shaderName}`);
                 return;
             }
 
@@ -5067,12 +5880,12 @@ class WebGLCanvas {
                             case 2: gl.uniform2f(location, value[0], value[1]); break;
                             case 3: gl.uniform3f(location, value[0], value[1], value[2]); break;
                             case 4: gl.uniform4f(location, value[0], value[1], value[2], value[3]); break;
-                            default: console.warn(`Unsupported uniform array length for ${name}`);
+                            default: // console.warn(`Unsupported uniform array length for ${name}`);
                         }
                     } else if (typeof value === 'number') {
                         gl.uniform1f(location, value);
                     } else {
-                        console.warn(`Unsupported uniform type for ${name}:`, typeof value);
+                        // console.warn(`Unsupported uniform type for ${name}:`, typeof value);
                     }
                 }
             });
@@ -5102,9 +5915,9 @@ class WebGLCanvas {
             this.checkGLError(`drawWithShader(${shaderName})`);
 
         } catch (e) {
-            console.error(`Error in drawWithShader(${shaderName}):`, e);
+            // console.error(`Error in drawWithShader(${shaderName}):`, e);
             if (this.gl && this.gl.isContextLost()) {
-                console.warn('Context lost during drawWithShader');
+                // console.warn('Context lost during drawWithShader');
                 this.contextLost = true;
             }
         }
@@ -5178,10 +5991,10 @@ class WebGLCanvas {
     */
     setBatchSize(size) {
         // Limit batch size to prevent memory issues that could cause context loss
-        const maxSafeSize = 5000; // Reduced from potentially 10000+
+        const maxSafeSize = 8000; // Reduced from potentially 10000+
         this.options.batchSize = Math.min(size, maxSafeSize);
 
-        console.log(`Batch size set to ${this.options.batchSize}`);
+        // console.log(`Batch size set to ${this.options.batchSize}`);
 
         // Recreate buffers with new size if WebGL is available
         if (this.gl && !this.isContextLost()) {
@@ -5198,7 +6011,7 @@ class WebGLCanvas {
         if (this.contextLossCount > 2) {
             // If we've had multiple context losses, reduce batch size
             const newSize = Math.max(1000, this.options.batchSize * 0.7);
-            console.warn(`Reducing batch size to ${newSize} due to context instability`);
+            // console.warn(`Reducing batch size to ${newSize} due to context instability`);
             this.setBatchSize(newSize);
         }
     }
@@ -5207,39 +6020,73 @@ class WebGLCanvas {
     * Enhanced error checking with context loss detection
     */
     checkGLError(operation) {
-        if (!this.gl) return true;
+        if (!this.gl || this.contextLost) return true;
 
-        const error = this.gl.getError();
-        if (error !== this.gl.NO_ERROR) {
-            let errorName = 'UNKNOWN_ERROR';
-            switch (error) {
-                case this.gl.INVALID_ENUM: errorName = 'INVALID_ENUM'; break;
-                case this.gl.INVALID_VALUE: errorName = 'INVALID_VALUE'; break;
-                case this.gl.INVALID_OPERATION: errorName = 'INVALID_OPERATION'; break;
-                case this.gl.INVALID_FRAMEBUFFER_OPERATION: errorName = 'INVALID_FRAMEBUFFER_OPERATION'; break;
-                case this.gl.OUT_OF_MEMORY: errorName = 'OUT_OF_MEMORY'; break;
-                case this.gl.CONTEXT_LOST_WEBGL:
-                    errorName = 'CONTEXT_LOST_WEBGL';
-                    this.contextLost = true;
-                    console.error('WebGL context lost detected in checkGLError');
-                    break;
+        try {
+            // First check if context is lost before calling getError
+            if (this.gl.isContextLost()) {
+                this.contextLost = true;
+                this.clearResourcesOnContextLoss();
+                return false;
             }
 
-            console.error(`WebGL error after ${operation}: ${errorName} (${error})`);
-
-            // Only log additional info if context is not lost
-            if (!this.contextLost) {
-                try {
-                    console.error('Current program:', this.gl.getParameter(this.gl.CURRENT_PROGRAM));
-                    console.error('Viewport:', this.gl.getParameter(this.gl.VIEWPORT));
-                } catch (e) {
-                    console.error('Could not get GL parameters:', e);
+            const error = this.gl.getError();
+            if (error !== this.gl.NO_ERROR) {
+                let errorName = 'UNKNOWN_ERROR';
+                switch (error) {
+                    case this.gl.INVALID_ENUM: errorName = 'INVALID_ENUM'; break;
+                    case this.gl.INVALID_VALUE: errorName = 'INVALID_VALUE'; break;
+                    case this.gl.INVALID_OPERATION: errorName = 'INVALID_OPERATION'; break;
+                    case this.gl.INVALID_FRAMEBUFFER_OPERATION: errorName = 'INVALID_FRAMEBUFFER_OPERATION'; break;
+                    case this.gl.OUT_OF_MEMORY:
+                        errorName = 'OUT_OF_MEMORY';
+                        // OUT_OF_MEMORY can lead to context loss, so prepare for it
+                        // console.warn('WebGL OUT_OF_MEMORY error - context loss may follow');
+                        break;
+                    case this.gl.CONTEXT_LOST_WEBGL:
+                        errorName = 'CONTEXT_LOST_WEBGL';
+                        this.contextLost = true;
+                        this.clearResourcesOnContextLoss();
+                        // console.error('WebGL context lost detected in checkGLError');
+                        break;
                 }
-            }
 
+                // console.error(`WebGL error after ${operation}: ${errorName} (${error})`);
+                return false;
+            }
+            return true;
+        } catch (e) {
+            // If getError itself throws, context is likely lost
+            // console.warn('Error checking WebGL error state - context may be lost:', e);
+            this.contextLost = true;
+            this.clearResourcesOnContextLoss();
             return false;
         }
-        return true;
+    }
+
+    /*
+     * Method to manually trigger context restore for testing
+     */
+    forceContextLoss() {
+        if (this.loseContextExtension) {
+            // console.log('Forcing context loss for testing...');
+            this.loseContextExtension.loseContext();
+        } else {
+            // console.warn('WEBGL_lose_context extension not available');
+        }
+    }
+
+    /*
+     * Method to get context status
+     */
+    getContextStatus() {
+        return {
+            contextLost: this.contextLost,
+            contextAvailable: !!this.gl,
+            contextValid: this.gl && !this.gl.isContextLost(),
+            contextLossCount: this.contextLossCount,
+            disposing: this.disposing
+        };
     }
 
     /**
@@ -5276,7 +6123,7 @@ class WebGLCanvas {
                     this.gl.deleteBuffer(this.postProcessing.quadIndexBuffer);
                 }
             } catch (e) {
-                console.warn('Error during post-processing cleanup:', e);
+                // console.warn('Error during post-processing cleanup:', e);
             }
         }
 
@@ -5344,7 +6191,7 @@ class WebGLCanvas {
                     });
                 }
             } catch (e) {
-                console.warn('Error during WebGL cleanup (context may be lost):', e);
+                // console.warn('Error during WebGL cleanup (context may be lost):', e);
             }
         }
 
@@ -5361,7 +6208,7 @@ class WebGLCanvas {
         if (this.textureCache) this.textureCache.clear();
         if (this.fontCache) this.fontCache.clear();
 
-        console.log('WebGLCanvas disposed successfully');
+        // console.log('WebGLCanvas disposed successfully');
     }
 
     /*
@@ -5373,42 +6220,45 @@ class WebGLCanvas {
         }
 
         if (this.isContextLost()) {
-            console.warn(`Skipping ${errorMessage} - WebGL context is lost`);
+            //// console.warn(`Skipping ${errorMessage} - WebGL context is lost`);
             return false;
         }
 
         if (!this.gl) {
-            console.warn(`Skipping ${errorMessage} - WebGL context not available`);
+            //// console.warn(`Skipping ${errorMessage} - WebGL context not available`);
             return false;
         }
 
         try {
             // Check context health before operation
             if (this.gl.isContextLost()) {
-                console.warn(`Context lost before ${errorMessage}`);
+                // console.warn(`Context lost before ${errorMessage}`);
                 this.contextLost = true;
+                this.clearResourcesOnContextLoss();
                 return false;
             }
 
             const result = operation();
 
-            // Check for errors after operation
-            this.checkGLError(errorMessage);
-
-            // Check context health after operation
+            // Check context health after operation (but be careful about getError)
             if (this.gl.isContextLost()) {
-                console.warn(`Context lost after ${errorMessage}`);
+                // console.warn(`Context lost after ${errorMessage}`);
                 this.contextLost = true;
+                this.clearResourcesOnContextLoss();
                 return false;
+            } else {
+                // Only check for errors if context is still valid
+                this.checkGLError(errorMessage);
             }
 
             return result;
         } catch (e) {
             if (this.gl && this.gl.isContextLost()) {
-                console.warn(`Context lost during ${errorMessage}`);
+                // console.warn(`Context lost during ${errorMessage}`);
                 this.contextLost = true;
+                this.clearResourcesOnContextLoss();
             } else {
-                console.error(`Error during ${errorMessage}:`, e);
+                // console.error(`Error during ${errorMessage}:`, e);
             }
             return false;
         }

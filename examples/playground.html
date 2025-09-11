@@ -737,10 +737,6 @@ if (ctx.flush) ctx.flush();`;
                             this.animationId = null;
                         }
 
-                        //if (this.ctx && typeof this.ctx.dispose === 'function') {
-                        //this.ctx.dispose();
-                        //}
-
                         // Get code from CodeMirror or textarea
                         const code = this.codeMirror ? this.codeMirror.getValue() : this.editor.value;
 
@@ -749,22 +745,30 @@ if (ctx.flush) ctx.flush();`;
                             return;
                         }
 
+                        console.log('Executing code:', code.substring(0, 100) + '...');
+
                         // Reset canvas state completely BEFORE running new code
                         this.resetCanvas();
 
-                        console.log('Executing code:', code.substring(0, 100) + '...');
+                        // Wait for reset to complete before running new code
+                        setTimeout(() => {
+                            try {
+                                // Create function with access to canvas and context
+                                const executeCode = new Function('canvas', 'WebGLCanvas', code);
+                                executeCode(this.canvas, window.WebGLCanvas);
 
-                        // Create function with access to canvas and context
-                        const executeCode = new Function('canvas', 'WebGLCanvas', code);
-                        executeCode(this.canvas, window.WebGLCanvas);
+                                // If using WebGL Canvas, flush any pending rendering
+                                if (this.ctx && typeof this.ctx.flush === 'function') {
+                                    this.ctx.flush();
+                                }
 
-                        // If using WebGL Canvas, flush any pending rendering
-                        if (this.ctx && typeof this.ctx.flush === 'function') {
-                            this.ctx.flush();
-                        }
-
-                        this.hideError();
-                        this.startFPSCounter();
+                                this.hideError();
+                                this.startFPSCounter();
+                            } catch (error) {
+                                console.error('Code execution error:', error);
+                                this.showError(error.message);
+                            }
+                        }, 50);
 
                     } catch (error) {
                         console.error('Code execution error:', error);
@@ -780,9 +784,29 @@ if (ctx.flush) ctx.flush();`;
                             this.animationId = null;
                         }
 
-                        // Dispose of existing WebGL context
+                        // Force garbage collection of WebGL resources before disposing
                         if (this.ctx && typeof this.ctx.dispose === 'function') {
+                            // Clear any pending batches first
+                            if (typeof this.ctx.clear === 'function') {
+                                this.ctx.clear();
+                            }
+                            if (typeof this.ctx.flush === 'function') {
+                                this.ctx.flush();
+                            }
+
+                            // Dispose of the context and all its resources
                             this.ctx.dispose();
+                            this.ctx = null;
+                        }
+
+                        // Get WebGL context directly to force cleanup
+                        const gl = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
+                        if (gl) {
+                            // Force lose context to free GPU memory immediately
+                            const ext = gl.getExtension('WEBGL_lose_context');
+                            if (ext) {
+                                ext.loseContext();
+                            }
                         }
 
                         // Create a completely new canvas element
@@ -805,12 +829,22 @@ if (ctx.flush) ctx.flush();`;
                             this.canvas.focus();
                         });
 
-                        // Initialize new context
-                        this.initCanvas();
+                        // Force garbage collection hint (if available)
+                        if (window.gc) {
+                            window.gc();
+                        }
+
+                        // Small delay to ensure cleanup completes
+                        setTimeout(() => {
+                            this.initCanvas();
+                        }, 10);
 
                     } catch (error) {
                         console.error('Error resetting canvas:', error);
-                        this.initCanvas();
+                        // Fallback: still try to initialize
+                        setTimeout(() => {
+                            this.initCanvas();
+                        }, 10);
                     }
                 }
 
